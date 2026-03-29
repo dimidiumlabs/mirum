@@ -1,0 +1,16 @@
+# Copyright (c) 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+version: '3'
+
+vars:
+  BUILD_DIR: build
+
+tasks:
+  build:
+    desc: Build master binary
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -o {{.BUILD_DIR}}/mirumd ./cmd/mirumd
+
+# yaml-language-server: $schema=https://taskfile.dev/schema.json

@@ -1,0 +1,12 @@
+# Copyright (c) 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+version = 1
+
+[[annotations]]
+path = [
+  "go.mod",
+  "go.sum",
+]
+SPDX-FileCopyrightText = "2026 Nikolay Govorov <me@govorov.online>"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
