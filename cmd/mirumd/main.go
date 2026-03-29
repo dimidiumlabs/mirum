@@ -17,14 +17,17 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+
+	"go.starlark.net/starlark"
 )
 
 var (
 	addr   = flag.String("addr", ":3000", "listen address")
 	secret = flag.String("secret", "", "GitHub webhook secret")
 	token  = flag.String("token", "", "GitHub personal access token (required)")
-	script = flag.String("script", "ci.sh", "script to run from repo root")
+	script = flag.String("script", ".mirum/main.star", "starlark script to run from repo root")
 )
 
 type pushEvent struct {
@@ -62,8 +65,8 @@ func processPush(push pushEvent) {
 		return
 	}
 
-	if out, err := runCmd(dir, "bash", *script); err != nil {
-		log.Error("build failed", "err", err, "output", out)
+	if err := runStarlark(dir); err != nil {
+		log.Error("build failed", "err", err)
 		_ = setStatus(owner, repo, sha, "failure", "Build failed")
 		return
 	}
@@ -133,6 +136,63 @@ func splitFullName(fullName string) (string, string) {
 		return fullName, ""
 	}
 	return parts[0], parts[1]
+}
+
+type taskCtx struct {
+	dir string
+}
+
+var _ starlark.HasAttrs = (*taskCtx)(nil)
+
+func (c *taskCtx) String() string        { return "ctx" }
+func (c *taskCtx) Type() string           { return "ctx" }
+func (c *taskCtx) Freeze()                {}
+func (c *taskCtx) Truth() starlark.Bool   { return true }
+func (c *taskCtx) Hash() (uint32, error)  { return 0, fmt.Errorf("unhashable: ctx") }
+func (c *taskCtx) AttrNames() []string    { return []string{"shell"} }
+
+func (c *taskCtx) Attr(name string) (starlark.Value, error) {
+	if name == "shell" {
+		return starlark.NewBuiltin("ctx.shell", c.shell), nil
+	}
+	return nil, nil
+}
+
+func (c *taskCtx) shell(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var cmd string
+	if err := starlark.UnpackPositionalArgs(fn.Name(), args, kwargs, 1, &cmd); err != nil {
+		return nil, err
+	}
+	proc := exec.Command("bash", "-c", cmd)
+	proc.Dir = c.dir
+	proc.Stdout = os.Stdout
+	proc.Stderr = os.Stderr
+	err := proc.Run()
+	if err != nil {
+		return nil, err
+	}
+	return starlark.None, nil
+}
+
+func runStarlark(dir string) error {
+	thread := &starlark.Thread{Name: "mirum"}
+	globals, err := starlark.ExecFile(thread, filepath.Join(dir, *script), nil, nil)
+	if err != nil {
+		return err
+	}
+
+	projectFn, ok := globals["project"]
+	if !ok {
+		return fmt.Errorf("%s: project() not defined", *script)
+	}
+	fn, ok := projectFn.(starlark.Callable)
+	if !ok {
+		return fmt.Errorf("%s: project is not a function", *script)
+	}
+
+	ctx := &taskCtx{dir: dir}
+	_, err = starlark.Call(thread, fn, starlark.Tuple{ctx}, nil)
+	return err
 }
 
 func runCmd(dir, name string, args ...string) (string, error) {
