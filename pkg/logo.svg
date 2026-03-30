@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg viewBox="-150 -150 800 800" xmlns="http://www.w3.org/2000/svg" fill="#00afaf">
+  <rect x="0" y="100"  width="100" height="100"></rect>
+  <rect x="0" y="200"  width="100" height="100"></rect>
+  <rect x="0" y="300"  width="100" height="100"></rect>
+  <rect x="0" y="400"  width="100" height="100"></rect>
+  <rect x="100" y="0"  width="100" height="100"></rect>
+  <rect x="100" y="100" width="100" height="100"></rect>
+  <rect x="100" y="300" width="100" height="100"></rect>
+  <rect x="100" y="400" width="100" height="100"></rect>
+  <rect x="200" y="0"  width="100" height="100"></rect>
+  <rect x="200" y="100" width="100" height="100"></rect>
+  <rect x="200" y="200" width="100" height="100"></rect>
+  <rect x="200" y="300" width="100" height="100"></rect>
+  <rect x="200" y="400" width="100" height="100"></rect>
+  <rect x="400" y="100" width="100" height="100"></rect>
+  <rect x="400" y="200" width="100" height="100"></rect>
+  <rect x="400" y="300" width="100" height="100"></rect>
+  <rect x="400" y="400" width="100" height="100"></rect>
+  <rect x="300" y="0"  width="100" height="100"></rect>
+  <rect x="300" y="100" width="100" height="100"></rect>
+  <rect x="300" y="300" width="100" height="100"></rect>
+  <rect x="300" y="400" width="100" height="100"></rect>
+</svg>

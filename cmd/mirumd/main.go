@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,13 +14,20 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
+	"github.com/coreos/go-systemd/v22/activation"
+	"github.com/coreos/go-systemd/v22/daemon"
 	"go.starlark.net/starlark"
 )
 
@@ -145,11 +153,11 @@ type taskCtx struct {
 var _ starlark.HasAttrs = (*taskCtx)(nil)
 
 func (c *taskCtx) String() string        { return "ctx" }
-func (c *taskCtx) Type() string           { return "ctx" }
-func (c *taskCtx) Freeze()                {}
-func (c *taskCtx) Truth() starlark.Bool   { return true }
-func (c *taskCtx) Hash() (uint32, error)  { return 0, fmt.Errorf("unhashable: ctx") }
-func (c *taskCtx) AttrNames() []string    { return []string{"shell"} }
+func (c *taskCtx) Type() string          { return "ctx" }
+func (c *taskCtx) Freeze()               {}
+func (c *taskCtx) Truth() starlark.Bool  { return true }
+func (c *taskCtx) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable: ctx") }
+func (c *taskCtx) AttrNames() []string   { return []string{"shell"} }
 
 func (c *taskCtx) Attr(name string) (starlark.Value, error) {
 	if name == "shell" {
@@ -260,10 +268,58 @@ func main() {
 		go processPush(push)
 	})
 
-	slog.Info("listening", "addr", *addr)
-
-	if err := http.ListenAndServe(*addr, mux); err != nil {
+	ln, err := socketActivationListener()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+
+	slog.Info("listening", "addr", ln.Addr())
+
+	srv := &http.Server{Handler: mux}
+
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+		<-sig
+
+		slog.Info("shutting down")
+		daemon.SdNotify(false, daemon.SdNotifyStopping)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	}()
+
+	daemon.SdNotify(false, daemon.SdNotifyReady)
+	go watchdog()
+
+	if err := srv.Serve(ln); err != http.ErrServerClosed {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func socketActivationListener() (net.Listener, error) {
+	listeners, _ := activation.Listeners()
+	if len(listeners) > 0 {
+		return listeners[0], nil
+	}
+	return net.Listen("tcp", *addr)
+}
+
+func watchdog() {
+	usecStr := os.Getenv("WATCHDOG_USEC")
+	if usecStr == "" {
+		return
+	}
+	usec, err := strconv.ParseInt(usecStr, 10, 64)
+	if err != nil || usec <= 0 {
+		return
+	}
+	interval := time.Duration(usec) * time.Microsecond / 2
+	for {
+		daemon.SdNotify(false, daemon.SdNotifyWatchdog)
+		time.Sleep(interval)
 	}
 }

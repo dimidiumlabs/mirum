@@ -1,0 +1,62 @@
+# Copyright (c) 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+name: mirum
+arch: ${ARCH}
+version: ${VERSION}
+license: AGPL-3.0-or-later
+platform: linux
+maintainer: Nikolay Govorov <me@govorov.online>
+description: Modern CI platform
+
+contents:
+  - src: ./LICENSE
+    dst: /usr/share/doc/mirum/LICENSE
+  - src: ./README.md
+    dst: /usr/share/doc/mirum/README.md
+
+  - src: build/mirumd
+    dst: /usr/local/bin/mirumd
+    file_info:
+      mode: 0755
+
+  - src: pkg/mirumd.yaml
+    dst: /etc/mirumd.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0640
+      owner: root
+      group: mirum
+
+  - src: pkg/mirumd.service
+    dst: /usr/lib/systemd/system/mirumd.service
+    file_info:
+      mode: 0644
+
+  - dst: /var/lib/mirumd
+    type: dir
+    file_info:
+      mode: 0755
+      owner: root
+      group: mirum
+
+
+scripts:
+  preinstall: pkg/scripts/preinstall.sh
+  postinstall: pkg/scripts/postinstall.sh
+  preremove: pkg/scripts/preremove.sh
+
+deb:
+  signature:
+    method: debsign
+    key_id: ${GPG_KEY_ID}
+    key_file: ${SIGNING_PRIVATE_KEY}
+
+rpm:
+  group: System Environment/Daemons
+  signature:
+    key_id: ${GPG_KEY_ID}
+    key_file: ${SIGNING_PRIVATE_KEY}

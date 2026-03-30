@@ -5,12 +5,30 @@ version: '3'
 
 vars:
   BUILD_DIR: build
+  DIST_DIR: build/dist
+  ARCHES: amd64 arm64 riscv64 ppc64le
 
 tasks:
   build:
-    desc: Build master binary
+    desc: Build for current arch
     cmds:
       - mkdir -p {{.BUILD_DIR}}
       - go build -o {{.BUILD_DIR}}/mirumd ./cmd/mirumd
+
+  package:
+    desc: Build deb/rpm packages for all architectures
+    requires:
+      vars: [VERSION]
+    env:
+      CGO_ENABLED: "0"
+      VERSION: "{{.VERSION}}"
+    cmds:
+      - mkdir -p {{.DIST_DIR}} {{.BUILD_DIR}}
+      - for: { var: ARCHES }
+        cmd: |
+          GOARCH={{.ITEM}} go build -o {{.BUILD_DIR}}/mirumd-linux-{{.ITEM}} ./cmd/mirumd
+          cp {{.BUILD_DIR}}/mirumd-linux-{{.ITEM}} {{.BUILD_DIR}}/mirumd
+          ARCH={{.ITEM}} nfpm package --packager deb --target {{.DIST_DIR}}/
+          ARCH={{.ITEM}} nfpm package --packager rpm --target {{.DIST_DIR}}/
 
 # yaml-language-server: $schema=https://taskfile.dev/schema.json

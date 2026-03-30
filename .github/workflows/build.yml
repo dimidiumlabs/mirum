@@ -1,0 +1,209 @@
+# Copyright (c) 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+  
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Check licenses
+        uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+  
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+  
+      - name: Vet
+        run: go vet ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.version.outputs.channel }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install tools
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt update && sudo apt install nfpm
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(cat VERSION)~nightly.$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
+            echo "channel=nightly" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and package
+        run: |
+          printf '%s' "$GPG_PRIVATE_KEY" > /tmp/private.asc
+          chmod 600 /tmp/private.asc
+          export SIGNING_PRIVATE_KEY="/tmp/private.asc"
+          task package VERSION=${{ steps.version.outputs.version }}
+          rm -f /tmp/private.asc
+        env:
+          GPG_KEY_ID: ${{ vars.GPG_KEY_ID }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          NFPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: packages
+          path: build/dist/*
+
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    needs: [lint, build]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils rclone createrepo-c
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: packages
+          path: dist
+
+      # Configure GPG keys
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+      - name: Update nightly tag
+        if: needs.build.outputs.channel == 'nightly'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f nightly
+          git push origin --force tag nightly
+
+      - name: Delete old nightly assets
+        if: needs.build.outputs.channel == 'nightly'
+        run: |
+          for asset in $(gh release view nightly --json assets --jq '.assets[].name' 2>/dev/null || true); do
+            gh release delete-asset nightly "$asset" --yes
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          name: ${{ needs.build.outputs.channel == 'stable' && needs.build.outputs.version || 'nightly' }}
+          tag_name: ${{ needs.build.outputs.channel == 'stable' && format('v{0}', needs.build.outputs.version) || 'nightly' }}
+          prerelease: ${{ needs.build.outputs.channel == 'nightly' }}
+          files: dist/*
+          body: |
+            **Build**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Update APT/RPM repos on S3
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf << EOF
+          [s3]
+          type = s3
+          provider = ${{ vars.S3_PROVIDER || 'Other' }}
+          access_key_id = ${{ secrets.S3_ACCESS_KEY_ID }}
+          secret_access_key = ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          region = ${{ vars.S3_REGION }}
+          endpoint = ${{ vars.S3_ENDPOINT }}
+          EOF
+
+      - name: Upload GPG public key
+        run: |
+          gpg --export --armor "${{ vars.GPG_KEY_ID }}" > public.gpg
+          rclone copyto public.gpg "s3:${{ vars.S3_BUCKET }}/public.gpg"
+
+      - name: Create APT repository
+        run: |
+          CHANNEL=${{ needs.build.outputs.channel }}
+
+          mkdir -p apt-repo
+          rclone copy "s3:${{ vars.S3_BUCKET }}/apt/" apt-repo/
+
+          mkdir -p /tmp/apt-cache
+          for ch in stable nightly; do
+            mkdir -p apt-repo/pool/$ch
+            for arch in amd64 arm64 riscv64 ppc64le; do
+              mkdir -p apt-repo/dists/$ch/main/binary-$arch
+            done
+          done
+          cp dist/*.deb apt-repo/pool/$CHANNEL/
+
+          cd apt-repo
+          apt-ftparchive generate "${{ github.workspace }}/pkg/apt-ftparchive.conf"
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Codename=$CHANNEL \
+            -o APT::FTPArchive::Release::Components=main \
+            -o APT::FTPArchive::Release::Architectures="amd64 arm64 riscv64 ppc64le" \
+            release dists/$CHANNEL/ > dists/$CHANNEL/Release
+          gpg --default-key="${{ vars.GPG_KEY_ID }}" --batch --yes -abs -o dists/$CHANNEL/Release.gpg dists/$CHANNEL/Release
+          gpg --default-key="${{ vars.GPG_KEY_ID }}" --batch --yes --clearsign -o dists/$CHANNEL/InRelease dists/$CHANNEL/Release
+          cd ..
+
+          rclone copy apt-repo/ "s3:${{ vars.S3_BUCKET }}/apt/" --progress
+
+      - name: Create RPM repository
+        run: |
+          CHANNEL=${{ needs.build.outputs.channel }}
+
+          mkdir -p rpm-repo
+          rclone copy "s3:${{ vars.S3_BUCKET }}/rpm/$CHANNEL/" rpm-repo/
+
+          cp dist/*.rpm rpm-repo/
+
+          createrepo_c --update rpm-repo/
+          gpg --default-key="${{ vars.GPG_KEY_ID }}" --batch --yes --detach-sign --armor rpm-repo/repodata/repomd.xml
+
+          cat > rpm-repo/mirum-${CHANNEL}.repo << EOF
+          [mirum-${CHANNEL}]
+          name=Mirum ${CHANNEL}
+          gpgkey=${{ vars.S3_PUBLIC_URL }}/public.gpg
+          baseurl=${{ vars.S3_PUBLIC_URL }}/rpm/${CHANNEL}/
+          enabled=1
+          gpgcheck=1
+          EOF
+
+          rclone copy rpm-repo/ "s3:${{ vars.S3_BUCKET }}/rpm/$CHANNEL/" --progress
