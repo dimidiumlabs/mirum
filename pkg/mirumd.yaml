@@ -2,3 +2,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 address: :2026
+secret: ""
+token: ""
+script: .mirum/main.star

@@ -29,14 +29,22 @@ import (
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
 	"go.starlark.net/starlark"
+	"gopkg.in/yaml.v3"
 )
 
-var (
-	addr   = flag.String("addr", ":3000", "listen address")
-	secret = flag.String("secret", "", "GitHub webhook secret")
-	token  = flag.String("token", "", "GitHub personal access token (required)")
-	script = flag.String("script", ".mirum/main.star", "starlark script to run from repo root")
-)
+type config struct {
+	Address string `yaml:"address"`
+	Secret  string `yaml:"secret"`
+	Token   string `yaml:"token"`
+	Script  string `yaml:"script"`
+}
+
+var cfg = config{
+	Address: ":3000",
+	Script:  ".mirum/main.star",
+}
+
+var configFile = flag.String("config", "", "path to config file")
 
 type pushEvent struct {
 	Ref   string `json:"ref"`
@@ -96,7 +104,7 @@ func setStatus(owner, repo, sha, state, description string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+*token)
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -121,20 +129,20 @@ func verifySignature(payload []byte, signature string) bool {
 	if err != nil {
 		return false
 	}
-	mac := hmac.New(sha256.New, []byte(*secret))
+	mac := hmac.New(sha256.New, []byte(cfg.Secret))
 	mac.Write(payload)
 	return hmac.Equal(mac.Sum(nil), decoded)
 }
 
 func authURL(cloneURL string) string {
-	if *token == "" {
+	if cfg.Token == "" {
 		return cloneURL
 	}
 	u, err := url.Parse(cloneURL)
 	if err != nil {
 		return cloneURL
 	}
-	u.User = url.UserPassword("x-access-token", *token)
+	u.User = url.UserPassword("x-access-token", cfg.Token)
 	return u.String()
 }
 
@@ -184,18 +192,18 @@ func (c *taskCtx) shell(thread *starlark.Thread, fn *starlark.Builtin, args star
 
 func runStarlark(dir string) error {
 	thread := &starlark.Thread{Name: "mirum"}
-	globals, err := starlark.ExecFile(thread, filepath.Join(dir, *script), nil, nil)
+	globals, err := starlark.ExecFile(thread, filepath.Join(dir, cfg.Script), nil, nil)
 	if err != nil {
 		return err
 	}
 
 	projectFn, ok := globals["project"]
 	if !ok {
-		return fmt.Errorf("%s: project() not defined", *script)
+		return fmt.Errorf("%s: project() not defined", cfg.Script)
 	}
 	fn, ok := projectFn.(starlark.Callable)
 	if !ok {
-		return fmt.Errorf("%s: project is not a function", *script)
+		return fmt.Errorf("%s: project is not a function", cfg.Script)
 	}
 
 	ctx := &taskCtx{dir: dir}
@@ -216,9 +224,20 @@ func runCmd(dir, name string, args ...string) (string, error) {
 func main() {
 	flag.Parse()
 
-	if *token == "" {
-		fmt.Fprintln(os.Stderr, "error: --token is required")
-		flag.Usage()
+	if *configFile != "" {
+		data, err := os.ReadFile(*configFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+
+	if cfg.Token == "" {
+		fmt.Fprintln(os.Stderr, "error: token is required")
 		os.Exit(1)
 	}
 
@@ -230,7 +249,7 @@ func main() {
 			return
 		}
 
-		if len(*secret) > 0 && !verifySignature(body, r.Header.Get("X-Hub-Signature-256")) {
+		if len(cfg.Secret) > 0 && !verifySignature(body, r.Header.Get("X-Hub-Signature-256")) {
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
 		}
@@ -305,7 +324,7 @@ func socketActivationListener() (net.Listener, error) {
 	if len(listeners) > 0 {
 		return listeners[0], nil
 	}
-	return net.Listen("tcp", *addr)
+	return net.Listen("tcp", cfg.Address)
 }
 
 func watchdog() {
