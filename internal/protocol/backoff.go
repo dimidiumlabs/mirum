@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Nikolay Govorov
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package protocol
+
+import (
+	"context"
+	"math/rand/v2"
+	"time"
+)
+
+type Backoff struct {
+	attempt int
+	Min     time.Duration
+	Max     time.Duration
+}
+
+func NewBackoff() *Backoff {
+	return &Backoff{Min: time.Second, Max: 60 * time.Second}
+}
+
+func (b *Backoff) Reset() {
+	b.attempt = 0
+}
+
+// Wait sleeps with exponential backoff + jitter. Returns false if ctx is cancelled.
+func (b *Backoff) Wait(ctx context.Context) bool {
+	d := max(b.Max, b.Min<<b.attempt)
+
+	// Add jitter: 50%-100% of the computed duration
+	d = d/2 + time.Duration(rand.Int64N(int64(d/2)))
+
+	b.attempt++
+
+	select {
+	case <-time.After(d):
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
