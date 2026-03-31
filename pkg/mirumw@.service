@@ -2,24 +2,24 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 [Unit]
-Description=Mirum daemon (modern CI platform)
+Description=Mirum worker %i (modern CI platform)
 Requires=network-online.target
 After=time-sync.target network-online.target remote-fs.target nss-lookup.target
 Wants=time-sync.target
 
 [Service]
 Type=notify
-User=mirumd
-Group=mirumd
+User=mirumw
+Group=mirumw
 Restart=always
 RestartSec=30
 WatchdogSec=30
 NotifyAccess=main
-ExecPaths=/usr/local/bin/mirumd /usr/lib
-ExecStart=/usr/local/bin/mirumd --config=/etc/mirum/mirumd.yaml
+ExecPaths=/usr/local/bin/mirumw
+ExecStart=/usr/local/bin/mirumw --config=/etc/mirum/mirumw-%i.yaml
 LimitCORE=infinity
 LimitNOFILE=500000
-AmbientCapabilities=CAP_NET_BIND_SERVICE
+AmbientCapabilities=
 
 # %p is resolved to the systemd unit name
 LogsDirectory=%p
@@ -30,9 +30,7 @@ RuntimeDirectory=%p
 UMask=0077
 LockPersonality=yes
 NoNewPrivileges=yes
-PrivateDevices=yes
 PrivateTmp=true
-ProcSubset=pid
 ProtectClock=yes
 ProtectControlGroups=yes
 ProtectHome=yes
@@ -40,7 +38,6 @@ ProtectHostname=yes
 ProtectKernelLogs=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
-ProtectProc=invisible
 ProtectSystem=strict
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=yes

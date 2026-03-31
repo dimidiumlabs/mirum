@@ -6,5 +6,8 @@ set -e
 
 if [ -x "/bin/systemctl" ] && [ -d /run/systemd/system ] && [ -f /usr/lib/systemd/system/mirumd.service ]; then
   /bin/systemctl daemon-reload
-  /bin/systemctl enable mirumd
+
+  # Don't enable by default, don't know in advance whether it's a daemon or a worker
+  # /bin/systemctl enable mirumd
+  # /bin/systemctl enable mirumw
 fi

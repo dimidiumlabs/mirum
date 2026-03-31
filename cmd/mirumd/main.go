@@ -19,15 +19,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
+	"mrdimidium/mirum/internal/supervisor"
+
 	"github.com/coreos/go-systemd/v22/activation"
-	"github.com/coreos/go-systemd/v22/daemon"
 	"go.starlark.net/starlark"
 	"gopkg.in/yaml.v3"
 )
@@ -301,21 +299,21 @@ func main() {
 
 	srv := &http.Server{Handler: mux}
 
+	sup := supervisor.Detect()
+	ctx := sup.WaitForStop(context.Background())
+
 	go func() {
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-		<-sig
-
+		<-ctx.Done()
 		slog.Info("shutting down")
-		daemon.SdNotify(false, daemon.SdNotifyStopping)
+		sup.Stopping()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		srv.Shutdown(shutdownCtx)
 	}()
 
-	daemon.SdNotify(false, daemon.SdNotifyReady)
-	go watchdog()
+	sup.Ready()
+	go sup.StartWatchdog()
 
 	if err := srv.Serve(ln); err != http.ErrServerClosed {
 		fmt.Fprintln(os.Stderr, err)
@@ -329,20 +327,4 @@ func socketActivationListener() (net.Listener, error) {
 		return listeners[0], nil
 	}
 	return net.Listen("tcp", cfg.Address)
-}
-
-func watchdog() {
-	usecStr := os.Getenv("WATCHDOG_USEC")
-	if usecStr == "" {
-		return
-	}
-	usec, err := strconv.ParseInt(usecStr, 10, 64)
-	if err != nil || usec <= 0 {
-		return
-	}
-	interval := time.Duration(usec) * time.Microsecond / 2
-	for {
-		daemon.SdNotify(false, daemon.SdNotifyWatchdog)
-		time.Sleep(interval)
-	}
 }

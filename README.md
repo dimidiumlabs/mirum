@@ -15,7 +15,11 @@ curl -fsSL https://dl.mirum.dev/public.gpg | sudo gpg --dearmor -o /usr/share/ke
 echo "deb [signed-by=/usr/share/keyrings/mirum.gpg] https://dl.mirum.dev/apt/ nightly main" | sudo tee /etc/apt/sources.list.d/mirum.list
 sudo apt update && sudo apt install mirum
 
+# Start the server
 sudo systemctl enable --now mirumd
+
+# Start a worker (optional, can run on a different host)
+sudo systemctl enable --now mirumw@default
 ```
 
 **Fedora/RHEL:**
@@ -28,7 +32,12 @@ sudo dnf config-manager addrepo --from-repofile=https://dl.mirum.dev/rpm/nightly
 sudo curl -o /etc/yum.repos.d/mirum-nightly.repo https://dl.mirum.dev/rpm/nightly/mirum-nightly.repo
 
 sudo dnf install mirum
+
+# Start the server
 sudo systemctl enable --now mirumd
+
+# Start a worker (optional, can run on a different host)
+sudo systemctl enable --now mirumw@default
 ```
 
 **openSUSE:**
@@ -39,7 +48,11 @@ sudo zypper addrepo https://dl.mirum.dev/rpm/nightly/ mirum-nightly
 sudo zypper refresh
 sudo zypper install mirum
 
+# Start the server
 sudo systemctl enable --now mirumd
+
+# Start a worker (optional, can run on a different host)
+sudo systemctl enable --now mirumw@default
 ```
 
 ## License

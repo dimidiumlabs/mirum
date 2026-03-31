@@ -4,7 +4,10 @@
 
 set -e
 
-if [ -x "/bin/systemctl" ] && [ -d /run/systemd/system ] && [ -f /usr/lib/systemd/system/mirumd.service ]; then
+if [ -x "/bin/systemctl" ] && [ -d /run/systemd/system ]; then
   /bin/systemctl stop mirumd.service || true
   /bin/systemctl disable mirumd.service || true
+
+  /bin/systemctl stop 'mirumw@*' || true
+  /bin/systemctl disable mirumw@.service || true
 fi

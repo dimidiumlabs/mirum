@@ -4,14 +4,11 @@
 
 set -e
 
-PROGRAM=mirum
-MIRUM_USER=${MIRUM_USER:-mirum}
-MIRUM_GROUP=${MIRUM_GROUP:-${MIRUM_USER}}
-
-if ! getent group $MIRUM_GROUP >/dev/null; then
-  groupadd --system $MIRUM_GROUP
-fi
-
-if ! getent passwd $MIRUM_USER >/dev/null; then
-  useradd --system --gid $MIRUM_GROUP --no-create-home --shell /usr/sbin/nologin $MIRUM_USER
-fi
+for svc in mirumd mirumw; do
+  if ! getent group $svc >/dev/null; then
+    groupadd --system $svc
+  fi
+  if ! getent passwd $svc >/dev/null; then
+    useradd --system --gid $svc --no-create-home --shell /usr/sbin/nologin $svc
+  fi
+done
