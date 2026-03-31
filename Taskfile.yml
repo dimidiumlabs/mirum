@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Nikolay Govorov
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-version: '3'
+version: "3"
 
 vars:
   BUILD_DIR: build
@@ -9,29 +9,47 @@ vars:
   ARCHES: amd64 arm64 riscv64 ppc64le
 
 tasks:
+  proto:
+    desc: Generate gRPC code from proto files
+    sources:
+      - proto/*.proto
+    generates:
+      - internal/protocol/pb/*.pb.go
+    cmds:
+      - protoc --go_out=. --go-grpc_out=. proto/mirum.proto
+
   build:
-    desc: Build for current arch
+    desc: "Build binaries (override GOOS/GOARCH for cross-compilation)"
+    deps: [proto]
+    vars:
+      GOOS: { sh: "echo ${GOOS:-$(go env GOOS)}" }
+      GOARCH: { sh: "echo ${GOARCH:-$(go env GOARCH)}" }
+      VERSION: { sh: cat VERSION }
+      LDFLAGS: "-X mrdimidium/mirum/internal/protocol.raw={{.VERSION}}"
+    env:
+      CGO_ENABLED: "0"
+      GOOS: "{{.GOOS}}"
+      GOARCH: "{{.GOARCH}}"
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -o {{.BUILD_DIR}}/mirumd ./cmd/mirumd
-      - go build -o {{.BUILD_DIR}}/mirumw ./cmd/mirumw
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumd
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumw
+      - cp {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumd
+      - cp {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumw
 
   package:
     desc: Build deb/rpm packages for all architectures
     requires:
       vars: [VERSION]
     env:
-      CGO_ENABLED: "0"
       VERSION: "{{.VERSION}}"
     cmds:
-      - mkdir -p {{.DIST_DIR}} {{.BUILD_DIR}}
+      - mkdir -p {{.DIST_DIR}}
       - for: { var: ARCHES }
         cmd: |
-          GOARCH={{.ITEM}} go build -o {{.BUILD_DIR}}/mirumd-linux-{{.ITEM}} ./cmd/mirumd
-          GOARCH={{.ITEM}} go build -o {{.BUILD_DIR}}/mirumw-linux-{{.ITEM}} ./cmd/mirumw
-          cp {{.BUILD_DIR}}/mirumd-linux-{{.ITEM}} {{.BUILD_DIR}}/mirumd
-          cp {{.BUILD_DIR}}/mirumw-linux-{{.ITEM}} {{.BUILD_DIR}}/mirumw
+          task build GOOS=linux GOARCH={{.ITEM}}
           ARCH={{.ITEM}} nfpm package --packager deb --target {{.DIST_DIR}}/
           ARCH={{.ITEM}} nfpm package --packager rpm --target {{.DIST_DIR}}/
+          rm {{.BUILD_DIR}}/mirumd {{.BUILD_DIR}}/mirumw
 
 # yaml-language-server: $schema=https://taskfile.dev/schema.json

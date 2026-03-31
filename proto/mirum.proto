@@ -1,0 +1,170 @@
+// Copyright (c) 2026 Nikolay Govorov
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+syntax = "proto3";
+
+package mirum;
+
+option go_package = "internal/protocol/pb";
+
+import "google/protobuf/timestamp.proto";
+
+service Mirum {
+  // Handshake performs mutual authentication via HMAC-SHA256 challenge-response.
+  //
+  // Step 1 (W→S): WorkerChallenge  — worker sends random nonce.
+  // Step 2 (S→W): ServerChallenge  — server sends nonce + HMAC(secret, w_nonce || s_nonce).
+  // Step 3 (W→S): WorkerProof      — worker sends HMAC(secret, s_nonce || w_nonce) + metadata.
+  // Step 4 (S→W): ServerResult     — server accepts or rejects.
+  rpc Handshake(stream HandshakeIn) returns (stream HandshakeOut);
+}
+
+message Version {
+  uint32 major = 1;
+  uint32 minor = 2;
+  uint32 patch = 3;
+}
+
+enum Os {
+  OS_UNSPECIFIED = 0;
+
+  // Major
+  OS_LINUX = 1;
+  OS_DARWIN = 2;
+  OS_WINDOWS = 3;
+
+  // BSD family
+  OS_FREEBSD = 4;
+  OS_OPENBSD = 5;
+  OS_NETBSD = 6;
+  OS_DRAGONFLY = 7;
+
+  // Unix / POSIX
+  OS_ILLUMOS = 8;
+  OS_SOLARIS = 9;
+  OS_AIX = 10;
+  OS_HURD = 11;
+
+  // Research / exotic
+  OS_PLAN9 = 12;
+  OS_HAIKU = 13;
+  OS_REDOX = 14;
+  OS_FUCHSIA = 15;
+  OS_SERENITY = 16;
+
+  // Embedded / real-time
+  OS_ZEPHYR = 17;
+  OS_NUTTX = 18;
+
+  // Go-supported
+  OS_ANDROID = 19;
+  OS_IOS = 20;
+  OS_JS = 21;
+  OS_WASIP1 = 22;
+}
+
+enum Arch {
+  ARCH_UNSPECIFIED = 0;
+
+  // Common
+  ARCH_386 = 1;
+  ARCH_ARM = 2;
+  ARCH_AMD64 = 3;
+  ARCH_ARM64 = 4;
+
+  // RISC-V
+  ARCH_RISCV64 = 5;
+  ARCH_RISCV32 = 6;
+
+  // Power
+  ARCH_PPC = 7;
+  ARCH_PPC64 = 8;
+  ARCH_PPC64LE = 9;
+
+  // IBM
+  ARCH_S390 = 10;
+  ARCH_S390X = 11;
+
+  // MIPS
+  ARCH_MIPS64LE = 12;
+  ARCH_MIPS64 = 13;
+  ARCH_MIPSLE = 14;
+  ARCH_MIPS = 15;
+
+  // Chinese
+  ARCH_LOONG64 = 16;
+  ARCH_SW64 = 17;
+
+  // SPARC
+  ARCH_SPARC64 = 18;
+  ARCH_SPARC = 19;
+
+  // Other
+  ARCH_ALPHA = 20;
+  ARCH_HPPA = 21;
+  ARCH_M68K = 22;
+  ARCH_SH4 = 23;
+  ARCH_IA64 = 24;
+  ARCH_WASM = 25;
+  ARCH_XTENSA = 26;
+  ARCH_ARC = 27;
+  ARCH_CSKY = 28;
+  ARCH_HEXAGON = 29;
+  ARCH_MICROBLAZE = 30;
+  ARCH_NIOS2 = 31;
+  ARCH_OPENRISC = 32;
+}
+
+// Worker → Server
+message HandshakeIn {
+  oneof step {
+    WorkerChallenge worker_challenge = 1;  // step 1
+    WorkerProof worker_proof = 2;          // step 3
+  }
+}
+
+// Server → Worker
+message HandshakeOut {
+  oneof step {
+    ServerChallenge server_challenge = 1;  // step 2
+    ServerResult server_result = 2;        // step 4
+  }
+}
+
+// Step 1: Worker generates a random nonce and sends it to the server.
+message WorkerChallenge {
+  bytes nonce = 1;
+}
+
+// Step 2: Server generates its own nonce and proves it knows the secret.
+message ServerChallenge {
+  bytes nonce = 1;
+  bytes proof = 2; // HMAC-SHA256(secret, worker_nonce || server_nonce)
+}
+
+// Step 3: Worker proves it knows the secret and sends metadata.
+// Metadata is sent only after the server is verified.
+message WorkerProof {
+  bytes proof = 1; // HMAC-SHA256(secret, server_nonce || worker_nonce)
+
+  bytes id = 2;
+  string name = 3;
+  Version version = 4;
+
+  Os os = 5;
+  Arch arch = 6;
+  string runtime = 7;
+
+  google.protobuf.Timestamp worker_time = 8;
+}
+
+// Step 4: Server accepts or rejects the worker.
+message ServerResult {
+  // A successful handshake doesn't mean the worker can run:
+  // the versions may be incompatible, the clocks may be out of sync,
+  // server limits may have been exceeded, or something else entirely.
+  optional string error = 1;
+
+  Version server_version = 2;
+  google.protobuf.Timestamp server_time = 3;
+}

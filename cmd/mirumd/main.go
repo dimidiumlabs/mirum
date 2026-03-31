@@ -23,23 +23,29 @@ import (
 	"strings"
 	"time"
 
+	"mrdimidium/mirum/internal/protocol"
+	"mrdimidium/mirum/internal/protocol/pb"
 	"mrdimidium/mirum/internal/supervisor"
 
 	"github.com/coreos/go-systemd/v22/activation"
 	"go.starlark.net/starlark"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"gopkg.in/yaml.v3"
 )
 
 type config struct {
-	Address string `yaml:"address"`
-	Secret  string `yaml:"secret"`
-	Token   string `yaml:"token"`
-	Script  string `yaml:"script"`
+	GrpcAddr string `yaml:"grpc_addr"`
+	WwwAddr  string `yaml:"www_addr"`
+	Secret   string `yaml:"secret"`
+	Token    string `yaml:"token"`
+	Script   string `yaml:"script"`
 }
 
 var cfg = config{
-	Address: ":3000",
-	Script:  ".mirum/main.star",
+	GrpcAddr: ":2026",
+	WwwAddr:  ":3000",
+	Script:   ".mirum/main.star",
 }
 
 var configFile = flag.String("config", "", "path to config file")
@@ -289,15 +295,24 @@ func main() {
 		go processPush(push)
 	})
 
-	ln, err := socketActivationListener()
+	// gRPC server
+	grpcLn, err := net.Listen("tcp", cfg.GrpcAddr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	grpcSrv := grpc.NewServer(grpc.StreamInterceptor(streamTimeoutInterceptor))
+	pb.RegisterMirumServer(grpcSrv, &mirumServer{secret: []byte(cfg.Secret)})
 
-	slog.Info("listening", "addr", ln.Addr())
+	// HTTP server
+	httpLn, err := socketActivationListener()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	httpSrv := &http.Server{Handler: mux}
 
-	srv := &http.Server{Handler: mux}
+	slog.Info("listening", "grpc", grpcLn.Addr(), "http", httpLn.Addr())
 
 	sup := supervisor.Detect()
 	ctx := sup.WaitForStop(context.Background())
@@ -307,18 +322,130 @@ func main() {
 		slog.Info("shutting down")
 		sup.Stopping()
 
+		grpcSrv.GracefulStop()
+
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		srv.Shutdown(shutdownCtx)
+		httpSrv.Shutdown(shutdownCtx)
 	}()
+
+	go grpcSrv.Serve(grpcLn)
 
 	sup.Ready()
 	go sup.StartWatchdog()
 
-	if err := srv.Serve(ln); err != http.ErrServerClosed {
+	if err := httpSrv.Serve(httpLn); err != http.ErrServerClosed {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+type mirumServer struct {
+	pb.UnimplementedMirumServer
+	secret []byte
+}
+
+func (s *mirumServer) Handshake(stream pb.Mirum_HandshakeServer) error {
+	// Step 1: receive worker nonce
+	in, err := stream.Recv()
+	if err != nil {
+		return fmt.Errorf("recv worker challenge: %w", err)
+	}
+	wc := in.GetWorkerChallenge()
+	if wc == nil {
+		return fmt.Errorf("expected WorkerChallenge")
+	}
+	workerNonce := wc.GetNonce()
+	if len(workerNonce) != protocol.NonceSize {
+		return fmt.Errorf("invalid nonce size: %d", len(workerNonce))
+	}
+
+	// Step 2: send server nonce + proof
+	serverNonce, err := protocol.GenerateNonce()
+	if err != nil {
+		return fmt.Errorf("generate nonce: %w", err)
+	}
+	if err := stream.Send(&pb.HandshakeOut{
+		Step: &pb.HandshakeOut_ServerChallenge{
+			ServerChallenge: &pb.ServerChallenge{
+				Nonce: serverNonce,
+				Proof: protocol.ComputeProof(s.secret, workerNonce, serverNonce),
+			},
+		},
+	}); err != nil {
+		return fmt.Errorf("send server challenge: %w", err)
+	}
+
+	// Step 3: receive worker proof + metadata
+	in, err = stream.Recv()
+	if err != nil {
+		return fmt.Errorf("recv worker proof: %w", err)
+	}
+	wp := in.GetWorkerProof()
+	if wp == nil {
+		return fmt.Errorf("expected WorkerProof")
+	}
+
+	if !protocol.VerifyProof(s.secret, serverNonce, workerNonce, wp.GetProof()) {
+		return s.reject(stream, "invalid secret")
+	}
+
+	// Check clock skew
+	wt := wp.GetWorkerTime()
+	if wt == nil {
+		return s.reject(stream, "worker_time is required")
+	}
+	skew := time.Since(wt.AsTime()).Abs()
+	if skew > time.Minute {
+		return s.reject(stream, fmt.Sprintf("clock skew too large: %s", skew.Truncate(time.Second)))
+	}
+	if skew > 10*time.Second {
+		slog.Warn("clock skew", "worker", wp.GetName(), "skew", skew.Truncate(time.Second))
+	}
+
+	slog.Info("worker connected",
+		"id", fmt.Sprintf("%x", wp.GetId()),
+		"name", wp.GetName(),
+		"os", wp.GetOs(),
+		"arch", wp.GetArch(),
+		"runtime", wp.GetRuntime(),
+	)
+
+	// Step 4: accept
+	return s.sendResult(stream, nil)
+}
+
+func (s *mirumServer) sendResult(stream pb.Mirum_HandshakeServer, errMsg *string) error {
+	return stream.Send(&pb.HandshakeOut{
+		Step: &pb.HandshakeOut_ServerResult{
+			ServerResult: &pb.ServerResult{
+				Error:         errMsg,
+				ServerVersion: protocol.VersionProto(),
+				ServerTime:    timestamppb.Now(),
+			},
+		},
+	})
+}
+
+func (s *mirumServer) reject(stream pb.Mirum_HandshakeServer, reason string) error {
+	if err := s.sendResult(stream, &reason); err != nil {
+		return err
+	}
+	return fmt.Errorf("%s", reason)
+}
+
+func streamTimeoutInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if info.FullMethod == pb.Mirum_Handshake_FullMethodName {
+		done := make(chan error, 1)
+		go func() { done <- handler(srv, ss) }()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(30 * time.Second):
+			return fmt.Errorf("handshake timeout")
+		}
+	}
+	return handler(srv, ss)
 }
 
 func socketActivationListener() (net.Listener, error) {
@@ -326,5 +453,5 @@ func socketActivationListener() (net.Listener, error) {
 	if len(listeners) > 0 {
 		return listeners[0], nil
 	}
-	return net.Listen("tcp", cfg.Address)
+	return net.Listen("tcp", cfg.WwwAddr)
 }

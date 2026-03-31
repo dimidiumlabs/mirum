@@ -3,3 +3,6 @@
 
 /build
 /.task
+
+# grpc generated code
+internal/protocol/pb

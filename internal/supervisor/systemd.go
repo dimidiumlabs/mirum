@@ -5,6 +5,7 @@ package supervisor
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
@@ -16,11 +17,8 @@ import (
 
 type systemd struct{}
 
-func detectSystemd() Supervisor {
-	if os.Getenv("NOTIFY_SOCKET") == "" {
-		return nil
-	}
-	return &systemd{}
+func detectSystemd() bool {
+	return os.Getenv("NOTIFY_SOCKET") != ""
 }
 
 func (*systemd) WaitForStop(ctx context.Context) context.Context {
@@ -30,11 +28,15 @@ func (*systemd) WaitForStop(ctx context.Context) context.Context {
 }
 
 func (*systemd) Ready() {
-	daemon.SdNotify(false, daemon.SdNotifyReady)
+	if _, err := daemon.SdNotify(false, daemon.SdNotifyReady); err != nil {
+		slog.Warn("sd_notify ready", "err", err)
+	}
 }
 
 func (*systemd) Stopping() {
-	daemon.SdNotify(false, daemon.SdNotifyStopping)
+	if _, err := daemon.SdNotify(false, daemon.SdNotifyStopping); err != nil {
+		slog.Warn("sd_notify stopping", "err", err)
+	}
 }
 
 func (*systemd) StartWatchdog() {
@@ -48,7 +50,10 @@ func (*systemd) StartWatchdog() {
 	}
 	interval := time.Duration(usec) * time.Microsecond / 2
 	for {
-		daemon.SdNotify(false, daemon.SdNotifyWatchdog)
+		if _, err := daemon.SdNotify(false, daemon.SdNotifyWatchdog); err != nil {
+			slog.Warn("sd_notify watchdog", "err", err)
+			return
+		}
 		time.Sleep(interval)
 	}
 }

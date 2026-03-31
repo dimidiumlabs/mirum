@@ -1,7 +1,8 @@
 # Copyright (c) 2026 Nikolay Govorov
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-address: :2026
+grpc_addr: :2026
+www_addr: :3000
 secret: ""
 token: ""
 script: .mirum/main.star

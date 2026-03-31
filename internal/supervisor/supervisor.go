@@ -33,8 +33,8 @@ type Supervisor interface {
 
 // Detect returns a Supervisor for the current platform.
 func Detect() Supervisor {
-	if n := detectSystemd(); n != nil {
-		return n
+	if detectSystemd() {
+		return &systemd{}
 	}
 	return &noop{}
 }
