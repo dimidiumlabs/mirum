@@ -213,6 +213,8 @@ func (s *mirumServer) Complete(ctx context.Context, result *pb.TaskResult) (*pb.
 }
 
 func (s *mirumServer) Handshake(stream pb.Mirum_HandshakeServer) error {
+	hs := protocol.NewServerHandshake(s.secret)
+
 	// Step 1: receive worker nonce
 	in, err := stream.Recv()
 	if err != nil {
@@ -222,21 +224,17 @@ func (s *mirumServer) Handshake(stream pb.Mirum_HandshakeServer) error {
 	if wc == nil {
 		return fmt.Errorf("expected WorkerChallenge")
 	}
-	workerNonce := wc.GetNonce()
-	if len(workerNonce) != protocol.NonceSize {
-		return fmt.Errorf("invalid nonce size: %d", len(workerNonce))
-	}
 
 	// Step 2: send server nonce + proof
-	serverNonce, err := protocol.GenerateNonce()
+	serverNonce, proof, err := hs.Challenge(wc.GetNonce())
 	if err != nil {
-		return fmt.Errorf("generate nonce: %w", err)
+		return err
 	}
 	if err := stream.Send(&pb.HandshakeOut{
 		Step: &pb.HandshakeOut_ServerChallenge{
 			ServerChallenge: &pb.ServerChallenge{
 				Nonce: serverNonce,
-				Proof: protocol.ComputeProof(s.secret, workerNonce, serverNonce),
+				Proof: proof,
 			},
 		},
 	}); err != nil {
@@ -253,21 +251,18 @@ func (s *mirumServer) Handshake(stream pb.Mirum_HandshakeServer) error {
 		return fmt.Errorf("expected WorkerProof")
 	}
 
-	if !protocol.VerifyProof(s.secret, serverNonce, workerNonce, wp.GetProof()) {
-		return s.reject(stream, "invalid secret")
-	}
-
-	// Check clock skew
 	wt := wp.GetWorkerTime()
 	if wt == nil {
 		return s.reject(stream, "worker_time is required")
 	}
-	skew := time.Since(wt.AsTime()).Abs()
-	if skew > time.Minute {
-		return s.reject(stream, fmt.Sprintf("clock skew too large: %s", skew.Truncate(time.Second)))
+
+	if err := hs.Verify(wp.GetProof(), wt.AsTime()); err != nil {
+		return s.reject(stream, err.Error())
 	}
-	if skew > 10*time.Second {
-		slog.Warn("clock skew", "worker", wp.GetName(), "skew", skew.Truncate(time.Second))
+
+	var warnings []string
+	if skew := time.Since(wt.AsTime()).Abs(); skew > 10*time.Second {
+		warnings = append(warnings, fmt.Sprintf("clock drift: %s", skew.Truncate(time.Second)))
 	}
 
 	slog.Info("worker connected",
@@ -282,23 +277,24 @@ func (s *mirumServer) Handshake(stream pb.Mirum_HandshakeServer) error {
 	if p, ok := peer.FromContext(stream.Context()); ok {
 		s.authedPeers.Store(p.Addr.String(), true)
 	}
-	return s.sendResult(stream, nil)
+	return s.sendResult(stream, nil, warnings)
 }
 
-func (s *mirumServer) sendResult(stream pb.Mirum_HandshakeServer, errMsg *string) error {
+func (s *mirumServer) sendResult(stream pb.Mirum_HandshakeServer, errMsg *string, warnings []string) error {
 	return stream.Send(&pb.HandshakeOut{
 		Step: &pb.HandshakeOut_ServerResult{
 			ServerResult: &pb.ServerResult{
 				Error:         errMsg,
 				ServerVersion: protocol.VersionProto(),
 				ServerTime:    timestamppb.Now(),
+				Warnings:      warnings,
 			},
 		},
 	})
 }
 
 func (s *mirumServer) reject(stream pb.Mirum_HandshakeServer, reason string) error {
-	if err := s.sendResult(stream, &reason); err != nil {
+	if err := s.sendResult(stream, &reason, nil); err != nil {
 		return err
 	}
 	return fmt.Errorf("%s", reason)

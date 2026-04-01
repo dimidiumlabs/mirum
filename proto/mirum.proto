@@ -178,6 +178,10 @@ message ServerResult {
 
   Version server_version = 2;
   google.protobuf.Timestamp server_time = 3;
+
+  // Non-fatal warnings for the worker to log (clock drift, upcoming
+  // deprecations, expiring secrets, known vulnerabilities, etc.).
+  repeated string warnings = 4;
 }
 
 message PollRequest {

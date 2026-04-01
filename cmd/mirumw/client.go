@@ -103,8 +103,10 @@ func (c *client) handshake(ctx context.Context) error {
 		return fmt.Errorf("open stream: %w", err)
 	}
 
+	hs := protocol.NewClientHandshake([]byte(c.cfg.Secret))
+
 	// Step 1: send worker nonce
-	workerNonce, err := protocol.GenerateNonce()
+	workerNonce, err := hs.Challenge()
 	if err != nil {
 		return fmt.Errorf("generate nonce: %w", err)
 	}
@@ -116,18 +118,19 @@ func (c *client) handshake(ctx context.Context) error {
 		return fmt.Errorf("send challenge: %w", err)
 	}
 
-	// Step 2: receive server challenge, verify server
+	// Step 2: receive server challenge, verify and compute proof
 	out, err := stream.Recv()
 	if err != nil {
 		return fmt.Errorf("recv server challenge: %w", err)
 	}
-
 	sc := out.GetServerChallenge()
 	if sc == nil {
 		return fmt.Errorf("expected ServerChallenge")
 	}
-	if !protocol.VerifyProof([]byte(c.cfg.Secret), workerNonce, sc.GetNonce(), sc.GetProof()) {
-		return fmt.Errorf("server proof verification failed")
+
+	workerProof, err := hs.Verify(sc.GetNonce(), sc.GetProof())
+	if err != nil {
+		return err
 	}
 
 	// Step 3: send worker proof + metadata
@@ -138,7 +141,7 @@ func (c *client) handshake(ctx context.Context) error {
 	if err := stream.Send(&pb.HandshakeIn{
 		Step: &pb.HandshakeIn_WorkerProof{
 			WorkerProof: &pb.WorkerProof{
-				Proof:      protocol.ComputeProof([]byte(c.cfg.Secret), sc.GetNonce(), workerNonce),
+				Proof:      workerProof,
 				Name:       name,
 				Version:    protocol.VersionProto(),
 				Os:         protocol.DetectOs(),
@@ -161,7 +164,11 @@ func (c *client) handshake(ctx context.Context) error {
 		return fmt.Errorf("expected ServerResult")
 	}
 	if sr.Error != nil {
-		return fmt.Errorf("server rejected: %s", *sr.Error)
+		return fmt.Errorf("%w: %s", protocol.ErrServerRejected, *sr.Error)
+	}
+
+	for _, w := range sr.GetWarnings() {
+		slog.Warn("server warning", "msg", w)
 	}
 
 	v := sr.GetServerVersion()
