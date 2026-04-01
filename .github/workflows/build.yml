@@ -147,8 +147,7 @@ jobs:
         run: |
           gpg --export --armor "${{ vars.GPG_KEY_ID }}" > public.gpg
           rclone copyto public.gpg "s3:${{ vars.S3_BUCKET }}/public.gpg"
-          rclone copyto pkg/index.html "s3:${{ vars.S3_BUCKET }}/index.html"
-          rclone copyto pkg/404.html "s3:${{ vars.S3_BUCKET }}/404.html"
+          rclone copy pkg/dl/ "s3:${{ vars.S3_BUCKET }}/"
 
       - name: Create APT repository
         run: |
