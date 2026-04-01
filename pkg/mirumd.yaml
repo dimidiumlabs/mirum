@@ -1,6 +1,8 @@
 # Copyright (c) 2026 Nikolay Govorov
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+# Ignored when the corresponding systemd socket activation fd is present.
+# See mirumd.socket for details (FileDescriptorName=grpc / http).
 grpc_addr: :2026
 www_addr: :3000
 secret: ""

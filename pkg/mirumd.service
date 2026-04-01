@@ -7,6 +7,19 @@ Requires=network-online.target
 After=time-sync.target network-online.target remote-fs.target nss-lookup.target
 Wants=time-sync.target
 
+# Socket activation (optional):
+#   Create mirumd.socket with named file descriptors "http" and "grpc":
+#
+#   [Socket]
+#   ListenStream=0.0.0.0:3000
+#   FileDescriptorName=http
+#
+#   [Socket]
+#   ListenStream=0.0.0.0:2026
+#   FileDescriptorName=grpc
+#
+# Without socket activation the daemon binds www_addr and grpc_addr from config.
+
 [Service]
 Type=notify
 User=mirumd
