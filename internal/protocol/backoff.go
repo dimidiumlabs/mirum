@@ -24,7 +24,7 @@ func (b *Backoff) Reset() {
 
 // Wait sleeps with exponential backoff + jitter. Returns false if ctx is cancelled.
 func (b *Backoff) Wait(ctx context.Context) bool {
-	d := max(b.Max, b.Min<<b.attempt)
+	d := min(b.Max, b.Min<<b.attempt)
 
 	// Add jitter: 50%-100% of the computed duration
 	d = d/2 + time.Duration(rand.Int64N(int64(d/2)))

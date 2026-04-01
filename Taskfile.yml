@@ -18,22 +18,26 @@ tasks:
     cmds:
       - protoc --go_out=. --go-grpc_out=. proto/mirum.proto
 
+  test:
+    desc: Run all tests
+    deps: [proto]
+    cmds:
+      - go test -race -count=1 ./...
+
   build:
     desc: "Build binaries (override GOOS/GOARCH for cross-compilation)"
     deps: [proto]
     vars:
       GOOS: { sh: "echo ${GOOS:-$(go env GOOS)}" }
       GOARCH: { sh: "echo ${GOARCH:-$(go env GOARCH)}" }
-      VERSION: { sh: cat VERSION }
-      LDFLAGS: "-X mrdimidium/mirum/internal/protocol.raw={{.VERSION}}"
     env:
       CGO_ENABLED: "0"
       GOOS: "{{.GOOS}}"
       GOARCH: "{{.GOARCH}}"
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumd
-      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumw
+      - go build -o {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumd
+      - go build -o {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumw
       - cp {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumd
       - cp {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumw
 
