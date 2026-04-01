@@ -6,7 +6,7 @@ package protocol
 import (
 	"runtime"
 
-	"mrdimidium/mirum/internal/protocol/pb"
+	"dimidiumlabs/mirum/internal/protocol/pb"
 )
 
 var osMap = map[string]pb.Os{

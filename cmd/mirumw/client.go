@@ -12,9 +12,9 @@ import (
 	"os"
 	"time"
 
-	"mrdimidium/mirum/internal/executor"
-	"mrdimidium/mirum/internal/protocol"
-	"mrdimidium/mirum/internal/protocol/pb"
+	"dimidiumlabs/mirum/internal/executor"
+	"dimidiumlabs/mirum/internal/protocol"
+	"dimidiumlabs/mirum/internal/protocol/pb"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"mrdimidium/mirum/internal/forges"
-	"mrdimidium/mirum/internal/protocol"
-	"mrdimidium/mirum/internal/protocol/pb"
-	"mrdimidium/mirum/internal/supervisor"
+	"dimidiumlabs/mirum/internal/forges"
+	"dimidiumlabs/mirum/internal/protocol"
+	"dimidiumlabs/mirum/internal/protocol/pb"
+	"dimidiumlabs/mirum/internal/supervisor"
 
 	"github.com/coreos/go-systemd/v22/activation"
 	"google.golang.org/grpc"

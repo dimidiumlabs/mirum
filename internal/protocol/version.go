@@ -4,15 +4,16 @@
 package protocol
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
-	"mrdimidium/mirum/internal/protocol/pb"
+	mirum "dimidiumlabs/mirum"
+	"dimidiumlabs/mirum/internal/protocol/pb"
 )
 
-// Set via -ldflags "-X mrdimidium/mirum/internal/protocol.raw=0.1.0"
-var raw string
+var ErrInvalidVersion = errors.New("invalid version string")
 
 var (
 	Major uint32
@@ -21,13 +22,27 @@ var (
 )
 
 func init() {
-	parts := strings.SplitN(strings.TrimSpace(raw), ".", 3)
-
-	if len(parts) == 3 {
-		Major = parseUint(parts[0])
-		Minor = parseUint(parts[1])
-		Patch = parseUint(parts[2])
+	var err error
+	Major, Minor, Patch, err = ParseVersion(mirum.Version)
+	if err != nil {
+		panic(fmt.Sprintf("version: %v", err))
 	}
+}
+
+// ParseVersion parses a "major.minor.patch" string.
+func ParseVersion(s string) (major, minor, patch uint32, err error) {
+	s = strings.TrimSpace(s)
+	parts := strings.SplitN(s, ".", 3)
+	if len(parts) != 3 {
+		return 0, 0, 0, ErrInvalidVersion
+	}
+	n0, err0 := strconv.ParseUint(parts[0], 10, 32)
+	n1, err1 := strconv.ParseUint(parts[1], 10, 32)
+	n2, err2 := strconv.ParseUint(parts[2], 10, 32)
+	if err0 != nil || err1 != nil || err2 != nil {
+		return 0, 0, 0, ErrInvalidVersion
+	}
+	return uint32(n0), uint32(n1), uint32(n2), nil
 }
 
 func VersionString() string {
@@ -36,9 +51,4 @@ func VersionString() string {
 
 func VersionProto() *pb.Version {
 	return &pb.Version{Major: Major, Minor: Minor, Patch: Patch}
-}
-
-func parseUint(s string) uint32 {
-	n, _ := strconv.ParseUint(s, 10, 32)
-	return uint32(n)
 }

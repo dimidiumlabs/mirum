@@ -1,4 +1,4 @@
-module mrdimidium/mirum
+module dimidiumlabs/mirum
 
 go 1.26.1
 

@@ -10,8 +10,8 @@ import (
 	"net"
 	"os"
 
-	"mrdimidium/mirum/internal/protocol"
-	"mrdimidium/mirum/internal/supervisor"
+	"dimidiumlabs/mirum/internal/protocol"
+	"dimidiumlabs/mirum/internal/supervisor"
 )
 
 func main() {
