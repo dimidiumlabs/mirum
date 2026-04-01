@@ -23,7 +23,7 @@ func detectSystemd() bool {
 
 func (*systemd) WaitForStop(ctx context.Context) context.Context {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
-	_ = stop
+	_ = stop // stop allows you to cancel the observer, but it's not particularly useful
 	return ctx
 }
 
@@ -44,16 +44,19 @@ func (*systemd) StartWatchdog() {
 	if usecStr == "" {
 		return
 	}
+
 	usec, err := strconv.ParseInt(usecStr, 10, 64)
 	if err != nil || usec <= 0 {
 		return
 	}
+
 	interval := time.Duration(usec) * time.Microsecond / 2
 	for {
 		if _, err := daemon.SdNotify(false, daemon.SdNotifyWatchdog); err != nil {
 			slog.Warn("sd_notify watchdog", "err", err)
 			return
 		}
+
 		time.Sleep(interval)
 	}
 }

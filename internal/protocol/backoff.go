@@ -10,9 +10,8 @@ import (
 )
 
 type Backoff struct {
-	attempt int
-	Min     time.Duration
-	Max     time.Duration
+	attempt  int
+	Min, Max time.Duration
 }
 
 func NewBackoff() *Backoff {

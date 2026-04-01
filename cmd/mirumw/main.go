@@ -45,8 +45,9 @@ func main() {
 		slog.Info("connected", "server", cfg.Server)
 		backoff.Reset()
 
-		// TODO: c.Work(ctx) — poll tasks, execute, report
-		<-ctx.Done()
+		if err := c.work(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("work loop failed", "err", err)
+		}
 
 		c.close()
 	}

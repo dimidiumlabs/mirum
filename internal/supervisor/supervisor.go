@@ -41,8 +41,10 @@ func Detect() Supervisor {
 
 type noop struct{}
 
-func (*noop) Ready()         {}
-func (*noop) Stopping()      {}
+func (*noop) Ready() {}
+
+func (*noop) Stopping() {}
+
 func (*noop) StartWatchdog() {}
 
 func (*noop) WaitForStop(ctx context.Context) context.Context {

@@ -9,14 +9,25 @@ option go_package = "internal/protocol/pb";
 
 import "google/protobuf/timestamp.proto";
 
+// Describes the contract between the worker and the server.
+// GRPC is the only contract between them, so to implement your own worker,
+// you only need to implement this service.
 service Mirum {
   // Handshake performs mutual authentication via HMAC-SHA256 challenge-response.
+  // The server will not accept any calls until a handshake is completed.
   //
   // Step 1 (W→S): WorkerChallenge  — worker sends random nonce.
   // Step 2 (S→W): ServerChallenge  — server sends nonce + HMAC(secret, w_nonce || s_nonce).
   // Step 3 (W→S): WorkerProof      — worker sends HMAC(secret, s_nonce || w_nonce) + metadata.
   // Step 4 (S→W): ServerResult     — server accepts or rejects.
   rpc Handshake(stream HandshakeIn) returns (stream HandshakeOut);
+
+  // When a worker has free resources, it requests a task from the server.
+  // The call will block if the server currently has no tasks.
+  rpc Poll(PollRequest) returns (Task);
+
+  // When the task is completed, the worker reports the result to the server.
+  rpc Complete(TaskResult) returns (CompleteResponse);
 }
 
 message Version {
@@ -168,3 +179,23 @@ message ServerResult {
   Version server_version = 2;
   google.protobuf.Timestamp server_time = 3;
 }
+
+message PollRequest {
+  
+}
+
+message Task {
+  string id = 1;
+  string clone_url = 2;
+  string branch = 3;
+  string sha = 4;
+  string repo_full_name = 5;
+}
+
+message TaskResult {
+  string task_id = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+message CompleteResponse {}

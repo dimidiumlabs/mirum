@@ -13,9 +13,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
-	"mrdimidium/mirum/internal/executor"
 	"mrdimidium/mirum/internal/forges"
 	"mrdimidium/mirum/internal/protocol"
 	"mrdimidium/mirum/internal/protocol/pb"
@@ -23,6 +23,10 @@ import (
 
 	"github.com/coreos/go-systemd/v22/activation"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/stats"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gopkg.in/yaml.v3"
 )
@@ -41,24 +45,16 @@ var cfg = config{
 
 var configFile = flag.String("config", "", "path to config file")
 
-func processPush(forge forges.Forge, ev *forges.PushEvent) {
-	ctx := context.Background()
-	log := slog.With("repo", ev.Owner+"/"+ev.Repo, "sha", ev.SHA[:8])
+type taskMeta struct {
+	forge forges.Forge
+	event *forges.PushEvent
+}
 
-	if err := forge.SetStatus(ctx, ev, forges.StatusPending, "Build started"); err != nil {
-		log.Error("set pending status", "err", err)
-	}
+var taskCounter int64
 
-	cloneURL := forge.AuthURL(ev.CloneURL)
-
-	if err := executor.Run(cloneURL, ev.Branch); err != nil {
-		log.Error("build failed", "err", err)
-		_ = forge.SetStatus(ctx, ev, forges.StatusFailure, "Build failed")
-		return
-	}
-
-	log.Info("build passed")
-	_ = forge.SetStatus(ctx, ev, forges.StatusSuccess, "Build passed")
+func nextTaskID() string {
+	taskCounter++
+	return fmt.Sprintf("task-%d", taskCounter)
 }
 
 func main() {
@@ -82,6 +78,11 @@ func main() {
 	}
 
 	forge := &forges.GitHub{Secret: cfg.Secret, Token: cfg.Token}
+
+	srv := &mirumServer{
+		secret: []byte(cfg.Secret),
+		queue:  make(chan *pb.Task, 100),
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
@@ -109,10 +110,21 @@ func main() {
 			return
 		}
 
-		slog.Info("push", "repo", ev.Owner+"/"+ev.Repo, "branch", ev.Branch, "sha", ev.SHA[:8])
-		w.WriteHeader(http.StatusAccepted)
+		id := nextTaskID()
+		slog.Info("push", "repo", ev.Owner+"/"+ev.Repo, "branch", ev.Branch, "sha", ev.SHA[:8], "task", id)
 
-		go processPush(forge, ev)
+		srv.tasks.Store(id, taskMeta{forge: forge, event: ev})
+		_ = forge.SetStatus(context.Background(), ev, forges.StatusPending, "Queued")
+
+		srv.queue <- &pb.Task{
+			Id:           id,
+			CloneUrl:     forge.AuthURL(ev.CloneURL),
+			Branch:       ev.Branch,
+			Sha:          ev.SHA,
+			RepoFullName: ev.Owner + "/" + ev.Repo,
+		}
+
+		w.WriteHeader(http.StatusAccepted)
 	})
 
 	grpcLn, httpLn, err := listeners()
@@ -121,8 +133,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	grpcSrv := grpc.NewServer(grpc.StreamInterceptor(streamTimeoutInterceptor))
-	pb.RegisterMirumServer(grpcSrv, &mirumServer{secret: []byte(cfg.Secret)})
+	grpcSrv := grpc.NewServer(
+		grpc.UnaryInterceptor(srv.unaryInterceptor),
+		grpc.StreamInterceptor(srv.streamInterceptor),
+		grpc.StatsHandler(&connTracker{server: srv}),
+	)
+	pb.RegisterMirumServer(grpcSrv, srv)
 	httpSrv := &http.Server{Handler: mux}
 
 	slog.Info("listening", "grpc", grpcLn.Addr(), "http", httpLn.Addr())
@@ -155,7 +171,45 @@ func main() {
 
 type mirumServer struct {
 	pb.UnimplementedMirumServer
-	secret []byte
+	secret      []byte
+	queue       chan *pb.Task
+	tasks       sync.Map // task_id → taskMeta
+	authedPeers sync.Map // peer addr string → true
+}
+
+func (s *mirumServer) Poll(ctx context.Context, req *pb.PollRequest) (*pb.Task, error) {
+	select {
+	case task := <-s.queue:
+		slog.Info("task dispatched", "id", task.Id, "repo", task.RepoFullName)
+		return task, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *mirumServer) Complete(ctx context.Context, result *pb.TaskResult) (*pb.CompleteResponse, error) {
+	meta, ok := s.tasks.LoadAndDelete(result.TaskId)
+	if !ok {
+		return nil, fmt.Errorf("unknown task: %s", result.TaskId)
+	}
+	m := meta.(taskMeta)
+
+	status := forges.StatusSuccess
+	desc := "Build passed"
+	if !result.Success {
+		status = forges.StatusFailure
+		desc = "Build failed"
+		if result.Error != "" {
+			desc = result.Error
+		}
+	}
+
+	if err := m.forge.SetStatus(ctx, m.event, status, desc); err != nil {
+		slog.Error("set status", "task", result.TaskId, "err", err)
+	}
+
+	slog.Info("task complete", "id", result.TaskId, "success", result.Success)
+	return &pb.CompleteResponse{}, nil
 }
 
 func (s *mirumServer) Handshake(stream pb.Mirum_HandshakeServer) error {
@@ -225,6 +279,9 @@ func (s *mirumServer) Handshake(stream pb.Mirum_HandshakeServer) error {
 	)
 
 	// Step 4: accept
+	if p, ok := peer.FromContext(stream.Context()); ok {
+		s.authedPeers.Store(p.Addr.String(), true)
+	}
 	return s.sendResult(stream, nil)
 }
 
@@ -247,7 +304,34 @@ func (s *mirumServer) reject(stream pb.Mirum_HandshakeServer, reason string) err
 	return fmt.Errorf("%s", reason)
 }
 
-func streamTimeoutInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+func peerAddr(ctx context.Context) string {
+	if p, ok := peer.FromContext(ctx); ok {
+		return p.Addr.String()
+	}
+	return ""
+}
+
+func (s *mirumServer) requireAuth(ctx context.Context, method string) error {
+	if method == pb.Mirum_Handshake_FullMethodName {
+		return nil
+	}
+	if _, ok := s.authedPeers.Load(peerAddr(ctx)); !ok {
+		return status.Error(codes.Unauthenticated, "handshake required")
+	}
+	return nil
+}
+
+func (s *mirumServer) unaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if err := s.requireAuth(ctx, info.FullMethod); err != nil {
+		return nil, err
+	}
+	return handler(ctx, req)
+}
+
+func (s *mirumServer) streamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if err := s.requireAuth(ss.Context(), info.FullMethod); err != nil {
+		return err
+	}
 	if info.FullMethod == pb.Mirum_Handshake_FullMethodName {
 		done := make(chan error, 1)
 		go func() { done <- handler(srv, ss) }()
@@ -259,6 +343,32 @@ func streamTimeoutInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamSe
 		}
 	}
 	return handler(srv, ss)
+}
+
+// connTracker implements stats.Handler to clean up authedPeers on disconnect.
+type connTracker struct {
+	stats.Handler
+	server *mirumServer
+}
+
+func (t *connTracker) TagConn(ctx context.Context, info *stats.ConnTagInfo) context.Context {
+	return ctx
+}
+
+func (t *connTracker) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
+	return ctx
+}
+
+func (t *connTracker) HandleRPC(ctx context.Context, s stats.RPCStats) {}
+
+func (t *connTracker) HandleConn(ctx context.Context, s stats.ConnStats) {
+	if _, ok := s.(*stats.ConnEnd); ok {
+		addr := peerAddr(ctx)
+		if addr != "" {
+			t.server.authedPeers.Delete(addr)
+			slog.Debug("peer disconnected", "addr", addr)
+		}
+	}
 }
 
 // listeners returns gRPC and HTTP listeners.

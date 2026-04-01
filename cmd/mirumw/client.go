@@ -12,6 +12,7 @@ import (
 	"os"
 	"time"
 
+	"mrdimidium/mirum/internal/executor"
 	"mrdimidium/mirum/internal/protocol"
 	"mrdimidium/mirum/internal/protocol/pb"
 
@@ -68,6 +69,32 @@ func connect(ctx context.Context, cfg *config) (*client, error) {
 
 func (c *client) close() error {
 	return c.conn.Close()
+}
+
+func (c *client) work(ctx context.Context) error {
+	for ctx.Err() == nil {
+		task, err := c.handle.Poll(ctx, &pb.PollRequest{})
+		if err != nil {
+			return fmt.Errorf("poll: %w", err)
+		}
+
+		slog.Info("task received", "id", task.Id, "repo", task.RepoFullName)
+
+		execErr := executor.Run(task.CloneUrl, task.Branch)
+
+		result := &pb.TaskResult{TaskId: task.Id, Success: execErr == nil}
+		if execErr != nil {
+			result.Error = execErr.Error()
+			slog.Error("task failed", "id", task.Id, "err", execErr)
+		} else {
+			slog.Info("task passed", "id", task.Id)
+		}
+
+		if _, err := c.handle.Complete(ctx, result); err != nil {
+			return fmt.Errorf("complete: %w", err)
+		}
+	}
+	return ctx.Err()
 }
 
 func (c *client) handshake(ctx context.Context) error {
