@@ -8,11 +8,11 @@ After=time-sync.target network-online.target remote-fs.target nss-lookup.target
 Wants=time-sync.target
 
 # Socket activation (optional):
-#   Create mirumd.socket with named file descriptors "http" and "grpc":
+#   Create mirumd.socket with named file descriptors "web" and "grpc":
 #
 #   [Socket]
 #   ListenStream=0.0.0.0:3000
-#   FileDescriptorName=http
+#   FileDescriptorName=web
 #
 #   [Socket]
 #   ListenStream=0.0.0.0:2026

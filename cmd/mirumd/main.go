@@ -5,372 +5,110 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
+	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/forges"
-	"dimidiumlabs/mirum/internal/protocol"
 	"dimidiumlabs/mirum/internal/protocol/pb"
 	"dimidiumlabs/mirum/internal/supervisor"
 
 	"github.com/coreos/go-systemd/v22/activation"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/peer"
-	"google.golang.org/grpc/stats"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gopkg.in/yaml.v3"
 )
 
-type config struct {
-	GrpcAddr string `yaml:"grpc_addr"`
-	WwwAddr  string `yaml:"www_addr"`
-	Secret   string `yaml:"secret"`
-	Token    string `yaml:"token"`
-}
-
-var cfg = config{
-	GrpcAddr: ":2026",
-	WwwAddr:  ":3000",
-}
-
-var configFile = flag.String("config", "", "path to config file")
-
-type taskMeta struct {
-	forge forges.Forge
-	event *forges.PushEvent
-}
-
-var taskCounter int64
-
-func nextTaskID() string {
-	taskCounter++
-	return fmt.Sprintf("task-%d", taskCounter)
-}
-
 func main() {
+	configFile := flag.String("config", "", "path to config file")
 	flag.Parse()
 
-	if *configFile != "" {
-		data, err := os.ReadFile(*configFile)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-
-	if cfg.Token == "" {
-		fmt.Fprintln(os.Stderr, "error: token is required")
+	if *configFile == "" {
+		slog.Error("-config required")
 		os.Exit(1)
 	}
 
-	forge := &forges.GitHub{Secret: cfg.Secret, Token: cfg.Token}
-
-	srv := &mirumServer{
-		secret: []byte(cfg.Secret),
-		queue:  make(chan *pb.Task, 100),
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Mirum</title></head><body><h1>Mirum</h1><p>CI server is running.</p></body></html>`)
-	})
-	mux.HandleFunc("POST /webhook", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "read body", http.StatusBadRequest)
-			return
-		}
-
-		ev, err := forge.Webhook(r, body)
-		if errors.Is(err, forges.ErrInvalidSignature) {
-			http.Error(w, "invalid signature", http.StatusUnauthorized)
-			return
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if ev == nil {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		id := nextTaskID()
-		slog.Info("push", "repo", ev.Owner+"/"+ev.Repo, "branch", ev.Branch, "sha", ev.SHA[:8], "task", id)
-
-		srv.tasks.Store(id, taskMeta{forge: forge, event: ev})
-		_ = forge.SetStatus(context.Background(), ev, forges.StatusPending, "Queued")
-
-		srv.queue <- &pb.Task{
-			Id:           id,
-			CloneUrl:     forge.AuthURL(ev.CloneURL),
-			Branch:       ev.Branch,
-			Sha:          ev.SHA,
-			RepoFullName: ev.Owner + "/" + ev.Repo,
-		}
-
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	grpcLn, httpLn, err := listeners()
+	cfg, err := getConfig(*configFile)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		slog.Error("config parsing failed", "err", err)
 		os.Exit(1)
 	}
 
-	grpcSrv := grpc.NewServer(
-		grpc.UnaryInterceptor(srv.unaryInterceptor),
-		grpc.StreamInterceptor(srv.streamInterceptor),
-		grpc.StatsHandler(&connTracker{server: srv}),
-	)
-	pb.RegisterMirumServer(grpcSrv, srv)
-	httpSrv := &http.Server{Handler: mux}
+	slog.Info("config loaded", "configfile", *configFile)
 
-	slog.Info("listening", "grpc", grpcLn.Addr(), "http", httpLn.Addr())
+	db, err := database.Open(context.Background(), cfg.DatabaseUri)
+	if err != nil {
+		slog.Error("couldn't open database: %w", "err", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		slog.Error("migration failed: %w", "err", err)
+		os.Exit(1)
+	}
+
+	slog.Info("database ready")
+
+	srv := &server{
+		cfg:   cfg,
+		db:    db,
+		forge: &forges.GitHub{Secret: cfg.WebhookSecret, Token: cfg.GitHubToken},
+		queue: make(chan *pb.Task, 100),
+	}
 
 	sup := supervisor.Detect()
 	ctx := sup.WaitForStop(context.Background())
 
-	go func() {
-		<-ctx.Done()
-		slog.Info("shutting down")
-		sup.Stopping()
+	wwwSrv := NewWwwServer(ctx, srv)
+	grpcSrv := NewGrpcServer(ctx, srv, []byte(cfg.WorkerSecret))
 
-		grpcSrv.GracefulStop()
-
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		httpSrv.Shutdown(shutdownCtx)
-	}()
-
-	go grpcSrv.Serve(grpcLn)
-
-	sup.Ready()
-	go sup.StartWatchdog()
-
-	if err := httpSrv.Serve(httpLn); err != http.ErrServerClosed {
+	grpcLn, webLn, err := listeners(cfg)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-}
 
-type mirumServer struct {
-	pb.UnimplementedMirumServer
-	secret      []byte
-	queue       chan *pb.Task
-	tasks       sync.Map // task_id → taskMeta
-	authedPeers sync.Map // peer addr string → true
-}
+	slog.Info("listening", "grpc", grpcLn.Addr(), "web", webLn.Addr())
 
-func (s *mirumServer) Poll(ctx context.Context, req *pb.PollRequest) (*pb.Task, error) {
-	select {
-	case task := <-s.queue:
-		slog.Info("task dispatched", "id", task.Id, "repo", task.RepoFullName)
-		return task, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-func (s *mirumServer) Complete(ctx context.Context, result *pb.TaskResult) (*pb.CompleteResponse, error) {
-	meta, ok := s.tasks.LoadAndDelete(result.TaskId)
-	if !ok {
-		return nil, fmt.Errorf("unknown task: %s", result.TaskId)
-	}
-	m := meta.(taskMeta)
-
-	status := forges.StatusSuccess
-	desc := "Build passed"
-	if !result.Success {
-		status = forges.StatusFailure
-		desc = "Build failed"
-		if result.Error != "" {
-			desc = result.Error
+	go func() {
+		if err := wwwSrv.Serve(webLn); err != nil && err != http.ErrServerClosed {
+			slog.Error("web server failed", "err", err)
+			os.Exit(1)
 		}
-	}
+	}()
+	go func() {
+		if err := grpcSrv.Serve(grpcLn); err != nil {
+			slog.Error("grpc server failed", "err", err)
+			os.Exit(1)
+		}
+	}()
 
-	if err := m.forge.SetStatus(ctx, m.event, status, desc); err != nil {
-		slog.Error("set status", "task", result.TaskId, "err", err)
-	}
+	sup.Ready()
+	go sup.StartWatchdog(ctx)
 
-	slog.Info("task complete", "id", result.TaskId, "success", result.Success)
-	return &pb.CompleteResponse{}, nil
-}
+	<-ctx.Done()
+	slog.Info("shutting down")
+	sup.Stopping()
 
-func (s *mirumServer) Handshake(stream pb.Mirum_HandshakeServer) error {
-	hs := protocol.NewServerHandshake(s.secret)
-
-	// Step 1: receive worker nonce
-	in, err := stream.Recv()
-	if err != nil {
-		return fmt.Errorf("recv worker challenge: %w", err)
-	}
-	wc := in.GetWorkerChallenge()
-	if wc == nil {
-		return fmt.Errorf("expected WorkerChallenge")
-	}
-
-	// Step 2: send server nonce + proof
-	serverNonce, proof, err := hs.Challenge(wc.GetNonce())
-	if err != nil {
-		return err
-	}
-	if err := stream.Send(&pb.HandshakeOut{
-		Step: &pb.HandshakeOut_ServerChallenge{
-			ServerChallenge: &pb.ServerChallenge{
-				Nonce: serverNonce,
-				Proof: proof,
-			},
-		},
-	}); err != nil {
-		return fmt.Errorf("send server challenge: %w", err)
-	}
-
-	// Step 3: receive worker proof + metadata
-	in, err = stream.Recv()
-	if err != nil {
-		return fmt.Errorf("recv worker proof: %w", err)
-	}
-	wp := in.GetWorkerProof()
-	if wp == nil {
-		return fmt.Errorf("expected WorkerProof")
-	}
-
-	wt := wp.GetWorkerTime()
-	if wt == nil {
-		return s.reject(stream, "worker_time is required")
-	}
-
-	if err := hs.Verify(wp.GetProof(), wt.AsTime()); err != nil {
-		return s.reject(stream, err.Error())
-	}
-
-	var warnings []string
-	if skew := time.Since(wt.AsTime()).Abs(); skew > 10*time.Second {
-		warnings = append(warnings, fmt.Sprintf("clock drift: %s", skew.Truncate(time.Second)))
-	}
-
-	slog.Info("worker connected",
-		"id", fmt.Sprintf("%x", wp.GetId()),
-		"name", wp.GetName(),
-		"os", wp.GetOs(),
-		"arch", wp.GetArch(),
-		"runtime", wp.GetRuntime(),
-	)
-
-	// Step 4: accept
-	if p, ok := peer.FromContext(stream.Context()); ok {
-		s.authedPeers.Store(p.Addr.String(), true)
-	}
-	return s.sendResult(stream, nil, warnings)
-}
-
-func (s *mirumServer) sendResult(stream pb.Mirum_HandshakeServer, errMsg *string, warnings []string) error {
-	return stream.Send(&pb.HandshakeOut{
-		Step: &pb.HandshakeOut_ServerResult{
-			ServerResult: &pb.ServerResult{
-				Error:         errMsg,
-				ServerVersion: protocol.VersionProto(),
-				ServerTime:    timestamppb.Now(),
-				Warnings:      warnings,
-			},
-		},
+	// Hard deadline: if graceful shutdown takes too long, exit.
+	time.AfterFunc(30*time.Second, func() {
+		slog.Error("shutdown timed out, forcing exit")
+		os.Exit(1)
 	})
-}
 
-func (s *mirumServer) reject(stream pb.Mirum_HandshakeServer, reason string) error {
-	if err := s.sendResult(stream, &reason, nil); err != nil {
-		return err
-	}
-	return fmt.Errorf("%s", reason)
-}
+	srv.Close()
 
-func peerAddr(ctx context.Context) string {
-	if p, ok := peer.FromContext(ctx); ok {
-		return p.Addr.String()
-	}
-	return ""
-}
-
-func (s *mirumServer) requireAuth(ctx context.Context, method string) error {
-	if method == pb.Mirum_Handshake_FullMethodName {
-		return nil
-	}
-	if _, ok := s.authedPeers.Load(peerAddr(ctx)); !ok {
-		return status.Error(codes.Unauthenticated, "handshake required")
-	}
-	return nil
-}
-
-func (s *mirumServer) unaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	if err := s.requireAuth(ctx, info.FullMethod); err != nil {
-		return nil, err
-	}
-	return handler(ctx, req)
-}
-
-func (s *mirumServer) streamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	if err := s.requireAuth(ss.Context(), info.FullMethod); err != nil {
-		return err
-	}
-	if info.FullMethod == pb.Mirum_Handshake_FullMethodName {
-		done := make(chan error, 1)
-		go func() { done <- handler(srv, ss) }()
-		select {
-		case err := <-done:
-			return err
-		case <-time.After(30 * time.Second):
-			return fmt.Errorf("handshake timeout")
-		}
-	}
-	return handler(srv, ss)
-}
-
-// connTracker implements stats.Handler to clean up authedPeers on disconnect.
-type connTracker struct {
-	stats.Handler
-	server *mirumServer
-}
-
-func (t *connTracker) TagConn(ctx context.Context, info *stats.ConnTagInfo) context.Context {
-	return ctx
-}
-
-func (t *connTracker) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
-	return ctx
-}
-
-func (t *connTracker) HandleRPC(ctx context.Context, s stats.RPCStats) {}
-
-func (t *connTracker) HandleConn(ctx context.Context, s stats.ConnStats) {
-	if _, ok := s.(*stats.ConnEnd); ok {
-		addr := peerAddr(ctx)
-		if addr != "" {
-			t.server.authedPeers.Delete(addr)
-			slog.Debug("peer disconnected", "addr", addr)
-		}
-	}
+	wwwSrv.Shutdown(ctx)
+	grpcSrv.GracefulStop()
 }
 
 // listeners returns gRPC and HTTP listeners.
 // With systemd socket activation it expects two named fds: "grpc" and "http".
-// Without socket activation it falls back to cfg.GrpcAddr and cfg.WwwAddr.
-func listeners() (grpcLn, httpLn net.Listener, err error) {
+// Without socket activation it falls back to configured addresses.
+func listeners(cfg *config) (grpcLn, webLn net.Listener, err error) {
 	named, err := activation.ListenersWithNames()
 	if err != nil {
 		return nil, nil, fmt.Errorf("socket activation: %w", err)
@@ -378,24 +116,25 @@ func listeners() (grpcLn, httpLn net.Listener, err error) {
 
 	if lns := named["grpc"]; len(lns) > 0 {
 		grpcLn = lns[0]
+	} else if grpcLn, err = net.Listen("tcp", cfg.GrpcAddr); err != nil {
+		return nil, nil, err
 	}
-	if lns := named["http"]; len(lns) > 0 {
-		httpLn = lns[0]
-	}
-
-	if grpcLn == nil {
-		grpcLn, err = net.Listen("tcp", cfg.GrpcAddr)
+	defer func() {
 		if err != nil {
-			return nil, nil, err
+			_ = grpcLn.Close()
 		}
-	}
-	if httpLn == nil {
-		httpLn, err = net.Listen("tcp", cfg.WwwAddr)
-		if err != nil {
-			grpcLn.Close()
-			return nil, nil, err
-		}
-	}
+	}()
 
-	return grpcLn, httpLn, nil
+	if lns := named["web"]; len(lns) > 0 {
+		webLn = lns[0]
+	} else if webLn, err = net.Listen("tcp", cfg.WwwAddr); err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = webLn.Close()
+		}
+	}()
+
+	return grpcLn, webLn, nil
 }

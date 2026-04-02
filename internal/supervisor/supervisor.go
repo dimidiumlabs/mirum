@@ -23,9 +23,9 @@ type Supervisor interface {
 	Stopping()
 
 	// StartWatchdog begins sending periodic keepalive pings.
-	// Blocks forever; call as a goroutine. Returns immediately if the
-	// supervisor does not require keepalives.
-	StartWatchdog()
+	// Blocks until ctx is cancelled; call as a goroutine. Returns
+	// immediately if the supervisor does not require keepalives.
+	StartWatchdog(ctx context.Context)
 
 	// WaitForStop blocks until the supervisor or OS requests shutdown.
 	WaitForStop(ctx context.Context) context.Context
@@ -45,7 +45,7 @@ func (*noop) Ready() {}
 
 func (*noop) Stopping() {}
 
-func (*noop) StartWatchdog() {}
+func (*noop) StartWatchdog(context.Context) {}
 
 func (*noop) WaitForStop(ctx context.Context) context.Context {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)

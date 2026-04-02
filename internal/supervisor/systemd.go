@@ -39,7 +39,7 @@ func (*systemd) Stopping() {
 	}
 }
 
-func (*systemd) StartWatchdog() {
+func (*systemd) StartWatchdog(ctx context.Context) {
 	usecStr := os.Getenv("WATCHDOG_USEC")
 	if usecStr == "" {
 		return
@@ -51,12 +51,19 @@ func (*systemd) StartWatchdog() {
 	}
 
 	interval := time.Duration(usec) * time.Microsecond / 2
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
 	for {
 		if _, err := daemon.SdNotify(false, daemon.SdNotifyWatchdog); err != nil {
 			slog.Warn("sd_notify watchdog", "err", err)
 			return
 		}
 
-		time.Sleep(interval)
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
 	}
 }

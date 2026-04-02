@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Ignored when the corresponding systemd socket activation fd is present.
-# See mirumd.socket for details (FileDescriptorName=grpc / http).
+# See mirumd.socket for details (FileDescriptorName=grpc / web).
 grpc_addr: :2026
 www_addr: :3000
 secret: ""
 token: ""
+dsn: ""
 script: .mirum/main.star

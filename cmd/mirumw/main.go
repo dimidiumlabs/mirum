@@ -28,7 +28,7 @@ func main() {
 	ctx := sup.WaitForStop(context.Background())
 
 	sup.Ready()
-	go sup.StartWatchdog()
+	go sup.StartWatchdog(ctx)
 
 	backoff := protocol.NewBackoff()
 
