@@ -16,7 +16,7 @@ tasks:
     generates:
       - internal/protocol/pb/*.pb.go
     cmds:
-      - protoc --go_out=. --go-grpc_out=. proto/mirum.proto
+      - protoc --go_out=. --go-grpc_out=. proto/mirum.proto proto/admin.proto
 
   test:
     desc: Run all tests

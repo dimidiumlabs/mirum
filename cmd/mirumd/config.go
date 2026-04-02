@@ -13,8 +13,10 @@ import (
 type config struct {
 	WwwAddr      string `yaml:"www_addr"`
 	GrpcAddr     string `yaml:"grpc_addr"`
+	AdminSocket  string `yaml:"admin_socket"`
 	DatabaseUri  string `yaml:"database_uri"`
 	WorkerSecret string `yaml:"secret"`
+	Pepper       string `yaml:"pepper"`
 
 	GitHubToken   string `yaml:"token"`
 	WebhookSecret string `yaml:"webhook_secret"`
@@ -22,8 +24,9 @@ type config struct {
 
 func getConfig(filename string) (*config, error) {
 	cfg := &config{
-		GrpcAddr: ":2026",
-		WwwAddr:  ":3000",
+		GrpcAddr:    ":2026",
+		WwwAddr:     ":3000",
+		AdminSocket: "/run/mirum/admin.sock",
 	}
 
 	data, err := os.ReadFile(filename)
@@ -43,6 +46,9 @@ func getConfig(filename string) (*config, error) {
 	}
 	if cfg.WebhookSecret == "" {
 		return nil, fmt.Errorf("error: webhook_secret is required")
+	}
+	if cfg.Pepper == "" {
+		return nil, fmt.Errorf("error: pepper is required")
 	}
 
 	return cfg, nil

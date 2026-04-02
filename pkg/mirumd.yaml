@@ -7,5 +7,7 @@ grpc_addr: :2026
 www_addr: :3000
 secret: ""
 token: ""
+pepper: ""
 dsn: ""
+admin_socket: /run/mirum/admin.sock
 script: .mirum/main.star
