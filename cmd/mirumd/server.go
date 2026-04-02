@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/forges"
@@ -28,6 +29,23 @@ type server struct {
 
 func (s *server) Close() {
 	close(s.queue)
+}
+
+// PurgeSessions periodically deletes expired sessions until ctx is cancelled.
+func (s *server) PurgeSessions(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := s.db.PurgeExpiredSessions(ctx); err != nil {
+				slog.Error("purge sessions", "err", err)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (s *server) enqueue(ev *forges.PushEvent) string {

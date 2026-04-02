@@ -15,7 +15,7 @@ type config struct {
 	GrpcAddr     string `yaml:"grpc_addr"`
 	AdminSocket  string `yaml:"admin_socket"`
 	DatabaseUri  string `yaml:"database_uri"`
-	WorkerSecret string `yaml:"secret"`
+	WorkerSecret string `yaml:"worker_secret"`
 	Pepper       string `yaml:"pepper"`
 
 	GitHubToken   string `yaml:"token"`

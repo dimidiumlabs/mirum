@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dimidiumlabs/mirum/internal/protocol"
@@ -15,11 +16,13 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// connIDKey is the context key for the unique connection identifier.
+type connIDKey struct{}
 
 func NewGrpcServer(ctx context.Context, srv *server, secret []byte) *grpc.Server {
 	gsrv := &grpcService{
@@ -43,7 +46,8 @@ type grpcService struct {
 	ctx         context.Context
 	srv         *server
 	secret      []byte
-	authedPeers sync.Map // peer addr string → true
+	authedConns sync.Map // conn ID (uint64) → true
+	nextConnID  atomic.Uint64
 }
 
 func (g *grpcService) Poll(ctx context.Context, req *pb.PollRequest) (*pb.Task, error) {
@@ -128,8 +132,8 @@ func (g *grpcService) Handshake(stream pb.Mirum_HandshakeServer) error {
 	)
 
 	// Step 4: accept
-	if p, ok := peer.FromContext(stream.Context()); ok {
-		g.authedPeers.Store(p.Addr.String(), true)
+	if id, ok := stream.Context().Value(connIDKey{}).(uint64); ok {
+		g.authedConns.Store(id, true)
 	}
 	return g.sendResult(stream, nil, warnings)
 }
@@ -154,18 +158,15 @@ func (g *grpcService) reject(stream pb.Mirum_HandshakeServer, reason string) err
 	return fmt.Errorf("%s", reason)
 }
 
-func peerAddr(ctx context.Context) string {
-	if p, ok := peer.FromContext(ctx); ok {
-		return p.Addr.String()
-	}
-	return ""
-}
-
 func (g *grpcService) requireAuth(ctx context.Context, method string) error {
 	if method == pb.Mirum_Handshake_FullMethodName {
 		return nil
 	}
-	if _, ok := g.authedPeers.Load(peerAddr(ctx)); !ok {
+	id, ok := ctx.Value(connIDKey{}).(uint64)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "handshake required")
+	}
+	if _, ok := g.authedConns.Load(id); !ok {
 		return status.Error(codes.Unauthenticated, "handshake required")
 	}
 	return nil
@@ -202,7 +203,8 @@ type connTracker struct {
 }
 
 func (t *connTracker) TagConn(ctx context.Context, info *stats.ConnTagInfo) context.Context {
-	return ctx
+	id := t.gsrv.nextConnID.Add(1)
+	return context.WithValue(ctx, connIDKey{}, id)
 }
 
 func (t *connTracker) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
@@ -213,10 +215,9 @@ func (t *connTracker) HandleRPC(ctx context.Context, s stats.RPCStats) {}
 
 func (t *connTracker) HandleConn(ctx context.Context, s stats.ConnStats) {
 	if _, ok := s.(*stats.ConnEnd); ok {
-		addr := peerAddr(ctx)
-		if addr != "" {
-			t.gsrv.authedPeers.Delete(addr)
-			slog.Debug("peer disconnected", "addr", addr)
+		if id, ok := ctx.Value(connIDKey{}).(uint64); ok {
+			t.gsrv.authedConns.Delete(id)
+			slog.Debug("peer disconnected", "conn", id)
 		}
 	}
 }

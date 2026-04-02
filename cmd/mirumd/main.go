@@ -159,6 +159,8 @@ func daemon(configFile, socketFlag string) {
 		}
 	}()
 
+	go srv.PurgeSessions(ctx)
+
 	sup.Ready()
 	go sup.StartWatchdog(ctx)
 
@@ -175,12 +177,12 @@ func daemon(configFile, socketFlag string) {
 	srv.Close()
 
 	adminSrv.GracefulStop()
-	wwwSrv.Shutdown(ctx)
+	wwwSrv.Shutdown(context.Background())
 	grpcSrv.GracefulStop()
 }
 
-// listeners returns gRPC and HTTP listeners.
-// With systemd socket activation it expects two named fds: "grpc" and "http".
+// listeners returns gRPC, web, and admin listeners.
+// With systemd socket activation it expects two named fds: "grpc" and "web".
 // Without socket activation it falls back to configured addresses.
 func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 	named, err := activation.ListenersWithNames()

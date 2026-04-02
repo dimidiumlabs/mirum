@@ -1,0 +1,16 @@
+{{/* Copyright (c) 2026 Nikolay Govorov */}}
+{{/* SPDX-License-Identifier: AGPL-3.0-or-later */}}
+{{define "title"}}Home{{end}}
+{{define "content"}}
+<h1>Mirum</h1>
+{{if .Email}}
+<p>Logged in as {{.Email}}</p>
+<form method="POST" action="/auth/logout">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<button type="submit">Logout</button>
+</form>
+{{else}}
+<p>CI server is running.</p>
+<p><a href="/auth/login">Login</a></p>
+{{end}}
+{{end}}
