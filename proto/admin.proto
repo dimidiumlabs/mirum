@@ -7,10 +7,16 @@ package mirum;
 
 option go_package = "internal/protocol/pb";
 
+import "google/protobuf/timestamp.proto";
+
 service Admin {
   rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
   rpc SetPassword(SetPasswordRequest) returns (SetPasswordResponse);
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+
+  rpc WorkerAdd(WorkerAddRequest) returns (WorkerAddResponse);
+  rpc WorkerRevoke(WorkerRevokeRequest) returns (WorkerRevokeResponse);
+  rpc WorkerList(WorkerListRequest) returns (WorkerListResponse);
 }
 
 message CreateUserRequest {
@@ -34,3 +40,29 @@ message DeleteUserRequest {
 }
 
 message DeleteUserResponse {}
+
+message WorkerAddRequest {
+  bytes public_key = 1;
+}
+
+message WorkerAddResponse {
+  string id = 1;
+}
+
+message WorkerRevokeRequest {
+  string id = 1;
+}
+
+message WorkerRevokeResponse {}
+
+message WorkerListRequest {}
+
+message WorkerListResponse {
+  repeated Worker workers = 1;
+}
+
+message Worker {
+  string id = 1;
+  bytes public_key = 2;
+  google.protobuf.Timestamp created_at = 3;
+}

@@ -6,10 +6,11 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
+	"runtime/secret"
 	"time"
 
 	"dimidiumlabs/mirum/internal/executor"
@@ -18,7 +19,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -29,20 +30,24 @@ type client struct {
 }
 
 func connect(ctx context.Context, cfg *config) (*client, error) {
-	var creds grpc.DialOption
-	if cfg.Insecure {
-		host, _, _ := net.SplitHostPort(cfg.Server)
-		if !isPrivateHost(host) {
-			return nil, fmt.Errorf("tls_insecure is only allowed for private/loopback addresses, got %s", host)
+	tlsCfg := &tls.Config{
+		MinVersion: tls.VersionTLS13, // required for reliable EKM (channel binding)
+	}
+	if cfg.TLSCA != "" {
+		caCert, err := os.ReadFile(cfg.TLSCA)
+		if err != nil {
+			return nil, fmt.Errorf("read CA cert: %w", err)
 		}
-
-		slog.Warn("TLS disabled, connection is not encrypted")
-		creds = grpc.WithTransportCredentials(insecure.NewCredentials())
-	} else {
-		creds = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{}))
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA cert")
+		}
+		tlsCfg.RootCAs = pool
 	}
 
-	conn, err := grpc.NewClient(cfg.Server, creds)
+	conn, err := grpc.NewClient(cfg.Server,
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -98,27 +103,26 @@ func (c *client) work(ctx context.Context) error {
 }
 
 func (c *client) handshake(ctx context.Context) error {
-	stream, err := c.handle.Handshake(ctx)
+	var p peer.Peer
+	stream, err := c.handle.Handshake(ctx, grpc.Peer(&p))
 	if err != nil {
 		return fmt.Errorf("open stream: %w", err)
 	}
 
-	hs := protocol.NewClientHandshake([]byte(c.cfg.Secret))
-
-	// Step 1: send worker nonce
-	workerNonce, err := hs.Challenge()
+	// Step 1: send worker public key
+	pubKey, err := protocol.LoadPublicKey(c.cfg.PubKeyFile)
 	if err != nil {
-		return fmt.Errorf("generate nonce: %w", err)
+		return fmt.Errorf("load public key: %w", err)
 	}
 	if err := stream.Send(&pb.HandshakeIn{
 		Step: &pb.HandshakeIn_WorkerChallenge{
-			WorkerChallenge: &pb.WorkerChallenge{Nonce: workerNonce},
+			WorkerChallenge: &pb.WorkerChallenge{PublicKey: pubKey},
 		},
 	}); err != nil {
 		return fmt.Errorf("send challenge: %w", err)
 	}
 
-	// Step 2: receive server challenge, verify and compute proof
+	// Step 2: receive server nonce
 	out, err := stream.Recv()
 	if err != nil {
 		return fmt.Errorf("recv server challenge: %w", err)
@@ -128,12 +132,35 @@ func (c *client) handshake(ctx context.Context) error {
 		return fmt.Errorf("expected ServerChallenge")
 	}
 
-	workerProof, err := hs.Verify(sc.GetNonce(), sc.GetProof())
-	if err != nil {
-		return err
+	// Extract EKM if server requested channel binding
+	var ekm []byte
+	if sc.GetBinded() {
+		ti, ok := p.AuthInfo.(credentials.TLSInfo)
+		if !ok {
+			return fmt.Errorf("channel binding requested but TLS info not available")
+		}
+		ekm, err = ti.State.ExportKeyingMaterial(protocol.EKMLabel, nil, protocol.EKMLength)
+		if err != nil {
+			return fmt.Errorf("export keying material: %w", err)
+		}
 	}
 
-	// Step 3: send worker proof + metadata
+	// Step 3: sign nonce (+ optional EKM) inside secret.Do
+	var signature []byte
+	var signErr error
+	secret.Do(func() {
+		key, err := protocol.LoadPrivateKey(c.cfg.KeyFile)
+		if err != nil {
+			signErr = fmt.Errorf("load key: %w", err)
+			return
+		}
+		hs := protocol.NewClientHandshake(key)
+		signature, signErr = hs.Sign(sc.GetNonce(), ekm)
+	})
+	if signErr != nil {
+		return signErr
+	}
+
 	name := c.cfg.Name
 	if name == "" {
 		name, _ = os.Hostname()
@@ -141,7 +168,7 @@ func (c *client) handshake(ctx context.Context) error {
 	if err := stream.Send(&pb.HandshakeIn{
 		Step: &pb.HandshakeIn_WorkerProof{
 			WorkerProof: &pb.WorkerProof{
-				Proof:      workerProof,
+				Signature:  signature,
 				Name:       name,
 				Version:    protocol.VersionProto(),
 				Os:         protocol.DetectOs(),

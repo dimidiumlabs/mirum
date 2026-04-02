@@ -2,3 +2,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 server: localhost:2026
+
+# Ed25519 key pair for worker authentication.
+# Generate with:
+#   openssl genpkey -algorithm Ed25519 -out /etc/mirum/mirumw-default.key
+#   openssl pkey -in /etc/mirum/mirumw-default.key -pubout -out /etc/mirum/mirumw-default.pub
+key_file: /etc/mirum/mirumw-default.key
+pub_key_file: /etc/mirum/mirumw-default.pub
+
+# Custom CA certificate for self-signed/dev TLS.
+# Leave empty to use system trust store.
+tls_ca: ""

@@ -15,10 +15,11 @@ import (
 const workerRuntime = "host"
 
 type config struct {
-	Name     string `yaml:"name"`
-	Server   string `yaml:"server"`
-	Secret   string `yaml:"secret"`
-	Insecure bool   `yaml:"tls_insecure"`
+	Name       string `yaml:"name"`
+	Server     string `yaml:"server"`
+	KeyFile    string `yaml:"key_file"`
+	PubKeyFile string `yaml:"pub_key_file"`
+	TLSCA      string `yaml:"tls_ca"` // custom CA cert for self-signed/dev
 }
 
 func getConfig(filename string) (*config, error) {
@@ -35,6 +36,13 @@ func getConfig(filename string) (*config, error) {
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			return nil, fmt.Errorf("couldn't parse config: %w", err)
 		}
+	}
+
+	if cfg.KeyFile == "" {
+		return nil, fmt.Errorf("error: key_file is required")
+	}
+	if cfg.PubKeyFile == "" {
+		return nil, fmt.Errorf("error: pub_key_file is required")
 	}
 
 	return cfg, nil

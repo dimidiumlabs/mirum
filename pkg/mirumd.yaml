@@ -5,9 +5,10 @@
 # See mirumd.socket for details (FileDescriptorName=grpc / web).
 grpc_addr: :2026
 www_addr: :3000
-worker_secret: ""
+tls_cert: ""
+tls_key: ""
 webhook_secret: ""
 token: ""
 pepper: ""
 database_uri: ""
-admin_socket: /run/mirum/admin.sock
+admin_socket: /run/mirumd/admin.sock

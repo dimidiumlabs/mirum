@@ -7,7 +7,6 @@ import (
 	"context"
 	"flag"
 	"log/slog"
-	"net"
 	"os"
 
 	"dimidiumlabs/mirum/internal/protocol"
@@ -54,17 +53,4 @@ func main() {
 
 	slog.Info("shutting down")
 	sup.Stopping()
-}
-
-func isPrivateHost(host string) bool {
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return false
-	}
-	for _, ip := range ips {
-		if !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() {
-			return false
-		}
-	}
-	return len(ips) > 0
 }

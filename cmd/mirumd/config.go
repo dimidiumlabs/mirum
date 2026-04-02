@@ -11,12 +11,14 @@ import (
 )
 
 type config struct {
-	WwwAddr      string `yaml:"www_addr"`
-	GrpcAddr     string `yaml:"grpc_addr"`
-	AdminSocket  string `yaml:"admin_socket"`
-	DatabaseUri  string `yaml:"database_uri"`
-	WorkerSecret string `yaml:"worker_secret"`
-	Pepper       string `yaml:"pepper"`
+	WwwAddr     string `yaml:"www_addr"`
+	GrpcAddr    string `yaml:"grpc_addr"`
+	AdminSocket string `yaml:"admin_socket"`
+	DatabaseUri string `yaml:"database_uri"`
+	Pepper      string `yaml:"pepper"`
+
+	TLSCert string `yaml:"tls_cert"`
+	TLSKey  string `yaml:"tls_key"`
 
 	GitHubToken   string `yaml:"token"`
 	WebhookSecret string `yaml:"webhook_secret"`
@@ -26,7 +28,7 @@ func getConfig(filename string) (*config, error) {
 	cfg := &config{
 		GrpcAddr:    ":2026",
 		WwwAddr:     ":3000",
-		AdminSocket: "/run/mirum/admin.sock",
+		AdminSocket: "/run/mirumd/admin.sock",
 	}
 
 	data, err := os.ReadFile(filename)
@@ -40,9 +42,6 @@ func getConfig(filename string) (*config, error) {
 
 	if cfg.DatabaseUri == "" {
 		return nil, fmt.Errorf("error: database_uri is required")
-	}
-	if cfg.WorkerSecret == "" {
-		return nil, fmt.Errorf("error: worker_secret is required")
 	}
 	if cfg.WebhookSecret == "" {
 		return nil, fmt.Errorf("error: webhook_secret is required")

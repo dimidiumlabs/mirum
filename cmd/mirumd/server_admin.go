@@ -5,10 +5,13 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"fmt"
 
 	"dimidiumlabs/mirum/internal/protocol/pb"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func NewAdminServer(srv *server) *grpc.Server {
@@ -43,4 +46,38 @@ func (a *adminService) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest
 		return nil, err
 	}
 	return &pb.DeleteUserResponse{}, nil
+}
+
+func (a *adminService) WorkerAdd(ctx context.Context, req *pb.WorkerAddRequest) (*pb.WorkerAddResponse, error) {
+	if len(req.PublicKey) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("invalid public key: expected %d bytes, got %d", ed25519.PublicKeySize, len(req.PublicKey))
+	}
+	id, err := a.srv.db.AddWorker(ctx, req.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.WorkerAddResponse{Id: id}, nil
+}
+
+func (a *adminService) WorkerRevoke(ctx context.Context, req *pb.WorkerRevokeRequest) (*pb.WorkerRevokeResponse, error) {
+	if err := a.srv.db.RevokeWorker(ctx, req.Id); err != nil {
+		return nil, err
+	}
+	return &pb.WorkerRevokeResponse{}, nil
+}
+
+func (a *adminService) WorkerList(ctx context.Context, req *pb.WorkerListRequest) (*pb.WorkerListResponse, error) {
+	workers, err := a.srv.db.ListWorkers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pbWorkers := make([]*pb.Worker, len(workers))
+	for i, w := range workers {
+		pbWorkers[i] = &pb.Worker{
+			Id:        w.ID,
+			PublicKey: w.PublicKey,
+			CreatedAt: timestamppb.New(w.CreatedAt),
+		}
+	}
+	return &pb.WorkerListResponse{Workers: pbWorkers}, nil
 }

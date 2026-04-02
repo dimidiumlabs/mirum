@@ -8,6 +8,9 @@ vars:
   DIST_DIR: build/dist
   ARCHES: amd64 arm64 riscv64 ppc64le
 
+env:
+  GOEXPERIMENT: runtimesecret
+
 tasks:
   proto:
     desc: Generate gRPC code from proto files
@@ -17,6 +20,13 @@ tasks:
       - internal/protocol/pb/*.pb.go
     cmds:
       - protoc --go_out=. --go-grpc_out=. proto/mirum.proto proto/admin.proto
+
+  lint:
+    desc: Run static checks
+    deps: [proto]
+    cmds:
+      - go vet ./...
+      - gofmt -l . | grep . && exit 1 || true
 
   test:
     desc: Run all tests

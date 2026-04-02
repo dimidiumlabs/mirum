@@ -4,21 +4,25 @@
 package protocol
 
 import (
-	"crypto/hmac"
+	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"errors"
+	"slices"
 	"time"
 )
 
 var (
-	ErrInvalidNonce   = errors.New("invalid nonce size")
-	ErrInvalidProof   = errors.New("invalid proof")
-	ErrClockSkew      = errors.New("clock skew too large")
-	ErrServerRejected = errors.New("server rejected handshake")
+	ErrInvalidPublicKey = errors.New("invalid public key size")
+	ErrInvalidNonce     = errors.New("invalid nonce size")
+	ErrInvalidSignature = errors.New("invalid signature")
+	ErrClockSkew        = errors.New("clock skew too large")
+	ErrServerRejected   = errors.New("server rejected handshake")
 )
 
 const NonceSize = 32
+
+const EKMLabel = "mirum-handshake"
+const EKMLength = 32
 
 func generateNonce() ([]byte, error) {
 	nonce := make([]byte, NonceSize)
@@ -26,50 +30,41 @@ func generateNonce() ([]byte, error) {
 	return nonce, err
 }
 
-// computeProof returns HMAC-SHA256(secret, first || second).
-func computeProof(secret, first, second []byte) []byte {
-	mac := hmac.New(sha256.New, secret)
-	mac.Write(first)
-	mac.Write(second)
-	return mac.Sum(nil)
-}
-
-func verifyProof(secret, first, second, proof []byte) bool {
-	expected := computeProof(secret, first, second)
-	return hmac.Equal(expected, proof)
-}
-
 // ServerHandshake holds state for the server side of the handshake protocol.
 type ServerHandshake struct {
-	secret      []byte
-	workerNonce []byte
+	publicKey   ed25519.PublicKey
 	serverNonce []byte
+	ekm         []byte // TLS Exported Keying Material, nil if not bound
 }
 
-func NewServerHandshake(secret []byte) *ServerHandshake {
-	return &ServerHandshake{secret: secret}
+func NewServerHandshake() *ServerHandshake {
+	return &ServerHandshake{}
 }
 
-// Challenge validates the worker nonce and returns the server nonce + proof.
-func (h *ServerHandshake) Challenge(workerNonce []byte) (serverNonce, proof []byte, err error) {
-	if len(workerNonce) != NonceSize {
-		return nil, nil, ErrInvalidNonce
+// Challenge validates the worker public key and returns a random nonce.
+// If ekm is non-nil, channel binding is enabled and the EKM will be
+// included in the signed data during verification.
+func (h *ServerHandshake) Challenge(publicKey, ekm []byte) (serverNonce []byte, err error) {
+	if len(publicKey) != ed25519.PublicKeySize {
+		return nil, ErrInvalidPublicKey
 	}
 
-	h.workerNonce = workerNonce
+	h.publicKey = publicKey
+	h.ekm = ekm
 	h.serverNonce, err = generateNonce()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	proof = computeProof(h.secret, workerNonce, h.serverNonce)
-	return h.serverNonce, proof, nil
+	return h.serverNonce, nil
 }
 
-// Verify checks the worker's proof and clock skew.
-func (h *ServerHandshake) Verify(proof []byte, workerTime time.Time) error {
-	if !verifyProof(h.secret, h.serverNonce, h.workerNonce, proof) {
-		return ErrInvalidProof
+// Verify checks the worker's ed25519 signature and clock skew.
+// The signed data is nonce (or nonce || ekm if channel binding is enabled).
+func (h *ServerHandshake) Verify(signature []byte, workerTime time.Time) error {
+	signed := slices.Concat(h.serverNonce, h.ekm)
+	if !ed25519.Verify(h.publicKey, signed, signature) {
+		return ErrInvalidSignature
 	}
 
 	skew := time.Since(workerTime).Abs()
@@ -82,25 +77,23 @@ func (h *ServerHandshake) Verify(proof []byte, workerTime time.Time) error {
 
 // ClientHandshake holds state for the client side of the handshake protocol.
 type ClientHandshake struct {
-	secret      []byte
-	workerNonce []byte
+	privateKey ed25519.PrivateKey
 }
 
-func NewClientHandshake(secret []byte) *ClientHandshake {
-	return &ClientHandshake{secret: secret}
+func NewClientHandshake(privateKey ed25519.PrivateKey) *ClientHandshake {
+	return &ClientHandshake{privateKey: privateKey}
 }
 
-// Challenge generates the worker nonce.
-func (h *ClientHandshake) Challenge() (workerNonce []byte, err error) {
-	h.workerNonce, err = generateNonce()
-	return h.workerNonce, err
+// PublicKey returns the 32-byte ed25519 public key.
+func (h *ClientHandshake) PublicKey() []byte {
+	return h.privateKey.Public().(ed25519.PublicKey)
 }
 
-// Verify checks the server proof and returns the worker proof.
-func (h *ClientHandshake) Verify(serverNonce, serverProof []byte) (proof []byte, err error) {
-	if !verifyProof(h.secret, h.workerNonce, serverNonce, serverProof) {
-		return nil, ErrInvalidProof
+// Sign signs the server nonce (and optional EKM) with the worker's private key.
+// If ekm is non-nil, the signed data is nonce || ekm.
+func (h *ClientHandshake) Sign(serverNonce, ekm []byte) ([]byte, error) {
+	if len(serverNonce) != NonceSize {
+		return nil, ErrInvalidNonce
 	}
-	proof = computeProof(h.secret, serverNonce, h.workerNonce)
-	return proof, nil
+	return ed25519.Sign(h.privateKey, slices.Concat(serverNonce, ekm)), nil
 }

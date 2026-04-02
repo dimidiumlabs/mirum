@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -27,7 +29,7 @@ func main() {
 	var socketPath string
 
 	root := &cobra.Command{Use: "mirumd", Short: "Mirum CI server"}
-	root.PersistentFlags().StringVar(&socketPath, "socket", "", "admin socket path (default from config or /run/mirum/admin.sock)")
+	root.PersistentFlags().StringVar(&socketPath, "socket", "", "admin socket path (default from config or /run/mirumd/admin.sock)")
 
 	daemonCmd := &cobra.Command{
 		Use:   "daemon",
@@ -86,6 +88,42 @@ func main() {
 	deleteUserCmd.Flags().String("email", "", "user email")
 	_ = deleteUserCmd.MarkFlagRequired("email")
 
+	workerCmd := &cobra.Command{Use: "worker", Short: "Manage workers"}
+	root.AddCommand(workerCmd)
+
+	workerAddCmd := &cobra.Command{
+		Use:   "add",
+		Short: "Register a worker",
+		Run: func(cmd *cobra.Command, args []string) {
+			pubkey, _ := cmd.Flags().GetString("pubkey")
+			workerAdd(socketPath, pubkey)
+		},
+	}
+	workerCmd.AddCommand(workerAddCmd)
+	workerAddCmd.Flags().String("pubkey", "", "base64-encoded ed25519 public key")
+	_ = workerAddCmd.MarkFlagRequired("pubkey")
+
+	workerRevokeCmd := &cobra.Command{
+		Use:   "revoke",
+		Short: "Revoke a worker",
+		Run: func(cmd *cobra.Command, args []string) {
+			id, _ := cmd.Flags().GetString("id")
+			workerRevoke(socketPath, id)
+		},
+	}
+	workerCmd.AddCommand(workerRevokeCmd)
+	workerRevokeCmd.Flags().String("id", "", "worker ID")
+	_ = workerRevokeCmd.MarkFlagRequired("id")
+
+	workerListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List active workers",
+		Run: func(cmd *cobra.Command, args []string) {
+			workerList(socketPath)
+		},
+	}
+	workerCmd.AddCommand(workerListCmd)
+
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -128,14 +166,32 @@ func daemon(configFile, socketFlag string) {
 	sup := supervisor.Detect()
 	ctx := sup.WaitForStop(context.Background())
 
+	var tlsCfg *tls.Config
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+		if err != nil {
+			slog.Error("failed to load TLS certificate", "err", err)
+			os.Exit(1)
+		}
+		tlsCfg = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS13, // required for reliable EKM (channel binding)
+		}
+		slog.Info("TLS enabled", "cert", cfg.TLSCert)
+	}
+
 	wwwSrv := NewWwwServer(ctx, srv)
-	grpcSrv := NewGrpcServer(ctx, srv, []byte(cfg.WorkerSecret))
+	grpcSrv := NewGrpcServer(ctx, srv, tlsCfg)
 	adminSrv := NewAdminServer(srv)
 
 	grpcLn, webLn, adminLn, err := listeners(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+
+	if tlsCfg != nil {
+		webLn = tls.NewListener(webLn, tlsCfg)
 	}
 
 	slog.Info("listening", "grpc", grpcLn.Addr(), "web", webLn.Addr(), "admin", cfg.AdminSocket)
@@ -196,7 +252,7 @@ func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 		return nil, nil, nil, err
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && grpcLn != nil {
 			_ = grpcLn.Close()
 		}
 	}()
@@ -207,7 +263,7 @@ func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 		return nil, nil, nil, err
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && webLn != nil {
 			_ = webLn.Close()
 		}
 	}()
@@ -216,7 +272,7 @@ func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 		return nil, nil, nil, err
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && adminLn != nil {
 			_ = adminLn.Close()
 		}
 	}()
@@ -226,7 +282,7 @@ func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 
 func adminClient(socketPath string) pb.AdminClient {
 	if socketPath == "" {
-		socketPath = "/run/mirum/admin.sock"
+		socketPath = "/run/mirumd/admin.sock"
 	}
 	conn, err := grpc.NewClient("unix://"+socketPath,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -271,4 +327,43 @@ func userDelete(socketPath, email string) {
 		os.Exit(1)
 	}
 	fmt.Println("ok")
+}
+
+func workerAdd(socketPath, pubkeyB64 string) {
+	pubkey, err := base64.StdEncoding.DecodeString(pubkeyB64)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "invalid base64:", err)
+		os.Exit(1)
+	}
+	resp, err := adminClient(socketPath).WorkerAdd(context.Background(), &pb.WorkerAddRequest{
+		PublicKey: pubkey,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println(resp.Id)
+}
+
+func workerRevoke(socketPath, id string) {
+	_, err := adminClient(socketPath).WorkerRevoke(context.Background(), &pb.WorkerRevokeRequest{
+		Id: id,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("ok")
+}
+
+func workerList(socketPath string) {
+	resp, err := adminClient(socketPath).WorkerList(context.Background(), &pb.WorkerListRequest{})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for _, w := range resp.Workers {
+		created := w.CreatedAt.AsTime().Format(time.DateOnly)
+		fmt.Printf("%s\t%s\t%s\n", w.Id, base64.StdEncoding.EncodeToString(w.PublicKey), created)
+	}
 }

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -16,6 +17,8 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -24,17 +27,21 @@ import (
 // connIDKey is the context key for the unique connection identifier.
 type connIDKey struct{}
 
-func NewGrpcServer(ctx context.Context, srv *server, secret []byte) *grpc.Server {
+func NewGrpcServer(ctx context.Context, srv *server, tlsCfg *tls.Config) *grpc.Server {
 	gsrv := &grpcService{
-		ctx:    ctx,
-		srv:    srv,
-		secret: secret,
+		ctx: ctx,
+		srv: srv,
+		tls: tlsCfg != nil,
 	}
-	s := grpc.NewServer(
+	opts := []grpc.ServerOption{
 		grpc.UnaryInterceptor(gsrv.unaryInterceptor),
 		grpc.StreamInterceptor(gsrv.streamInterceptor),
 		grpc.StatsHandler(&connTracker{gsrv: gsrv}),
-	)
+	}
+	if tlsCfg != nil {
+		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsCfg)))
+	}
+	s := grpc.NewServer(opts...)
 	pb.RegisterMirumServer(s, gsrv)
 	return s
 }
@@ -45,7 +52,7 @@ type grpcService struct {
 
 	ctx         context.Context
 	srv         *server
-	secret      []byte
+	tls         bool     // whether TLS is enabled (for channel binding)
 	authedConns sync.Map // conn ID (uint64) → true
 	nextConnID  atomic.Uint64
 }
@@ -71,9 +78,7 @@ func (g *grpcService) Complete(ctx context.Context, result *pb.TaskResult) (*pb.
 }
 
 func (g *grpcService) Handshake(stream pb.Mirum_HandshakeServer) error {
-	hs := protocol.NewServerHandshake(g.secret)
-
-	// Step 1: receive worker nonce
+	// Step 1: receive worker public key
 	in, err := stream.Recv()
 	if err != nil {
 		return fmt.Errorf("recv worker challenge: %w", err)
@@ -83,23 +88,34 @@ func (g *grpcService) Handshake(stream pb.Mirum_HandshakeServer) error {
 		return fmt.Errorf("expected WorkerChallenge")
 	}
 
-	// Step 2: send server nonce + proof
-	serverNonce, proof, err := hs.Challenge(wc.GetNonce())
+	// Look up the worker in the database
+	worker, err := g.srv.db.LookupWorker(stream.Context(), wc.GetPublicKey())
+	if err != nil {
+		return g.reject(stream, "unknown worker")
+	}
+
+	// Extract TLS EKM for channel binding (nil if no TLS)
+	ekm := g.extractEKM(stream.Context())
+
+	hs := protocol.NewServerHandshake()
+
+	// Step 2: generate challenge nonce
+	serverNonce, err := hs.Challenge(wc.GetPublicKey(), ekm)
 	if err != nil {
 		return err
 	}
 	if err := stream.Send(&pb.HandshakeOut{
 		Step: &pb.HandshakeOut_ServerChallenge{
 			ServerChallenge: &pb.ServerChallenge{
-				Nonce: serverNonce,
-				Proof: proof,
+				Nonce:  serverNonce,
+				Binded: ekm != nil,
 			},
 		},
 	}); err != nil {
 		return fmt.Errorf("send server challenge: %w", err)
 	}
 
-	// Step 3: receive worker proof + metadata
+	// Step 3: receive worker signature + metadata
 	in, err = stream.Recv()
 	if err != nil {
 		return fmt.Errorf("recv worker proof: %w", err)
@@ -114,7 +130,7 @@ func (g *grpcService) Handshake(stream pb.Mirum_HandshakeServer) error {
 		return g.reject(stream, "worker_time is required")
 	}
 
-	if err := hs.Verify(wp.GetProof(), wt.AsTime()); err != nil {
+	if err := hs.Verify(wp.GetSignature(), wt.AsTime()); err != nil {
 		return g.reject(stream, err.Error())
 	}
 
@@ -124,7 +140,7 @@ func (g *grpcService) Handshake(stream pb.Mirum_HandshakeServer) error {
 	}
 
 	slog.Info("worker connected",
-		"id", fmt.Sprintf("%x", wp.GetId()),
+		"worker_id", worker.ID,
 		"name", wp.GetName(),
 		"os", wp.GetOs(),
 		"arch", wp.GetArch(),
@@ -220,4 +236,26 @@ func (t *connTracker) HandleConn(ctx context.Context, s stats.ConnStats) {
 			slog.Debug("peer disconnected", "conn", id)
 		}
 	}
+}
+
+// extractEKM returns TLS Exported Keying Material from the peer context,
+// or nil if TLS is not enabled.
+func (g *grpcService) extractEKM(ctx context.Context) []byte {
+	if !g.tls {
+		return nil
+	}
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return nil
+	}
+	ti, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return nil
+	}
+	ekm, err := ti.State.ExportKeyingMaterial(protocol.EKMLabel, nil, protocol.EKMLength)
+	if err != nil {
+		slog.Warn("failed to export keying material", "err", err)
+		return nil
+	}
+	return ekm
 }

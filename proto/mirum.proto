@@ -13,12 +13,12 @@ import "google/protobuf/timestamp.proto";
 // GRPC is the only contract between them, so to implement your own worker,
 // you only need to implement this service.
 service Mirum {
-  // Handshake performs mutual authentication via HMAC-SHA256 challenge-response.
+  // Handshake performs worker authentication via ed25519 challenge-response.
   // The server will not accept any calls until a handshake is completed.
   //
-  // Step 1 (W→S): WorkerChallenge  — worker sends random nonce.
-  // Step 2 (S→W): ServerChallenge  — server sends nonce + HMAC(secret, w_nonce || s_nonce).
-  // Step 3 (W→S): WorkerProof      — worker sends HMAC(secret, s_nonce || w_nonce) + metadata.
+  // Step 1 (W→S): WorkerChallenge  — worker sends its ed25519 public key.
+  // Step 2 (S→W): ServerChallenge  — server sends a random nonce.
+  // Step 3 (W→S): WorkerProof      — worker signs the nonce with its private key + metadata.
   // Step 4 (S→W): ServerResult     — server accepts or rejects.
   rpc Handshake(stream HandshakeIn) returns (stream HandshakeOut);
 
@@ -142,21 +142,20 @@ message HandshakeOut {
   }
 }
 
-// Step 1: Worker generates a random nonce and sends it to the server.
+// Step 1: Worker sends its ed25519 public key (32 bytes).
 message WorkerChallenge {
-  bytes nonce = 1;
+  bytes public_key = 1;
 }
 
-// Step 2: Server generates its own nonce and proves it knows the secret.
+// Step 2: Server sends a random nonce for the worker to sign.
 message ServerChallenge {
   bytes nonce = 1;
-  bytes proof = 2; // HMAC-SHA256(secret, worker_nonce || server_nonce)
+  bool binded = 2; // if true, worker must include TLS EKM in signed data
 }
 
-// Step 3: Worker proves it knows the secret and sends metadata.
-// Metadata is sent only after the server is verified.
+// Step 3: Worker signs the server nonce and sends metadata.
 message WorkerProof {
-  bytes proof = 1; // HMAC-SHA256(secret, server_nonce || worker_nonce)
+  bytes signature = 1;
 
   bytes id = 2;
   string name = 3;

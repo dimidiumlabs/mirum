@@ -41,8 +41,8 @@ jobs:
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
   
-      - name: Check formatting
-        run: test -z "$(gofmt -l .)"
+      - name: Lint
+        run: task lint
 
       - name: Test
         run: task test
@@ -70,8 +70,6 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           NFPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
   
-      - name: Vet
-        run: go vet ./...
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
