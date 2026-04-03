@@ -5,7 +5,7 @@ syntax = "proto3";
 
 package mirum;
 
-option go_package = "internal/protocol/pb";
+option go_package = "dimidiumlabs/mirum/internal/protocol/pb";
 
 import "google/protobuf/timestamp.proto";
 

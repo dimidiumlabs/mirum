@@ -3,13 +3,14 @@ module dimidiumlabs/mirum
 go 1.26.1
 
 require (
+	connectrpc.com/connect v1.19.1
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/jackc/tern/v2 v2.3.6
 	github.com/spf13/cobra v1.8.0
 	go.starlark.net v0.0.0-20260326113308-fadfc96def35
 	golang.org/x/crypto v0.49.0
-	google.golang.org/grpc v1.79.3
+	golang.org/x/net v0.52.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -30,9 +31,7 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/cast v1.7.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260330182312-d5a96adf58d8 // indirect
 )

@@ -13,13 +13,14 @@ env:
 
 tasks:
   proto:
-    desc: Generate gRPC code from proto files
+    desc: Generate ConnectRPC code from proto files
     sources:
       - proto/*.proto
     generates:
-      - internal/protocol/pb/*.pb.go
+      - internal/protocol/pb/**/*.go
     cmds:
-      - protoc --go_out=. --go-grpc_out=. proto/mirum.proto proto/admin.proto
+      - rm -rf internal/protocol/pb
+      - cd proto && buf generate
 
   lint:
     desc: Run static checks
@@ -50,6 +51,23 @@ tasks:
       - go build -o {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumw
       - cp {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumd
       - cp {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumw
+
+  dev:
+    desc: Generate dev TLS cert and worker keys
+    cmds:
+      - mkdir -p dev
+      - >-
+        test -f dev/server.crt ||
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1
+        -keyout dev/server.key -out dev/server.crt
+        -days 365 -nodes -subj "/CN=mirumd"
+        -addext "subjectAltName=DNS:mirumd,DNS:localhost"
+      - >-
+        test -f dev/worker.key ||
+        openssl genpkey -algorithm ed25519 -out dev/worker.key
+      - >-
+        test -f dev/worker.pub ||
+        openssl pkey -in dev/worker.key -pubout -out dev/worker.pub
 
   package:
     desc: Build deb/rpm packages for all architectures

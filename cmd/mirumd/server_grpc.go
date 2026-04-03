@@ -8,78 +8,83 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
+
+	"connectrpc.com/connect"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"dimidiumlabs/mirum/internal/protocol"
 	"dimidiumlabs/mirum/internal/protocol/pb"
-
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/peer"
-	"google.golang.org/grpc/stats"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
 )
 
-// connIDKey is the context key for the unique connection identifier.
-type connIDKey struct{}
+// connKey is the context key for the underlying net.Conn.
+type connKey struct{}
 
-func NewGrpcServer(ctx context.Context, srv *server, tlsCfg *tls.Config) *grpc.Server {
+// tlsStateKey is the context key for TLS connection state.
+type tlsStateKey struct{}
+
+func NewGrpcServer(ctx context.Context, srv *server, tlsCfg *tls.Config) *http.Server {
 	gsrv := &grpcService{
 		ctx: ctx,
 		srv: srv,
 		tls: tlsCfg != nil,
 	}
-	opts := []grpc.ServerOption{
-		grpc.UnaryInterceptor(gsrv.unaryInterceptor),
-		grpc.StreamInterceptor(gsrv.streamInterceptor),
-		grpc.StatsHandler(&connTracker{gsrv: gsrv}),
+	opts := []connect.HandlerOption{
+		connect.WithInterceptors(gsrv),
 	}
-	if tlsCfg != nil {
-		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsCfg)))
+	path, handler := pbconnect.NewMirumHandler(gsrv, opts...)
+	mux := http.NewServeMux()
+	mux.Handle(path, requireGRPC(tlsMiddleware(handler)))
+	return &http.Server{
+		Handler:     h2c.NewHandler(mux, &http2.Server{}),
+		ConnContext: gsrv.connContext,
+		ConnState:   gsrv.connState,
+		BaseContext: func(_ net.Listener) context.Context {
+			return ctx
+		},
 	}
-	s := grpc.NewServer(opts...)
-	pb.RegisterMirumServer(s, gsrv)
-	return s
 }
 
-// grpcService is the gRPC transport adapter over server.
+// grpcService is the ConnectRPC transport adapter over server.
 type grpcService struct {
-	pb.UnimplementedMirumServer
+	pbconnect.UnimplementedMirumHandler
 
 	ctx         context.Context
 	srv         *server
 	tls         bool     // whether TLS is enabled (for channel binding)
-	authedConns sync.Map // conn ID (uint64) → true
-	nextConnID  atomic.Uint64
+	authedConns sync.Map // net.Conn → true
 }
 
-func (g *grpcService) Poll(ctx context.Context, req *pb.PollRequest) (*pb.Task, error) {
+func (g *grpcService) Poll(ctx context.Context, req *connect.Request[pb.PollRequest]) (*connect.Response[pb.Task], error) {
 	select {
 	case task, ok := <-g.srv.queue:
 		if !ok {
-			return nil, status.Error(codes.Unavailable, "server is shutting down")
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("server is shutting down"))
 		}
 		slog.Info("task dispatched", "id", task.Id, "repo", task.RepoFullName)
-		return task, nil
+		return connect.NewResponse(task), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-func (g *grpcService) Complete(ctx context.Context, result *pb.TaskResult) (*pb.CompleteResponse, error) {
-	if err := g.srv.complete(ctx, result.TaskId, result.Success, result.Error); err != nil {
+func (g *grpcService) Complete(ctx context.Context, req *connect.Request[pb.TaskResult]) (*connect.Response[pb.CompleteResponse], error) {
+	if err := g.srv.complete(ctx, req.Msg.TaskId, req.Msg.Success, req.Msg.Error); err != nil {
 		return nil, err
 	}
-	return &pb.CompleteResponse{}, nil
+	return connect.NewResponse(&pb.CompleteResponse{}), nil
 }
 
-func (g *grpcService) Handshake(stream pb.Mirum_HandshakeServer) error {
+func (g *grpcService) Handshake(ctx context.Context, stream *connect.BidiStream[pb.HandshakeIn, pb.HandshakeOut]) error {
 	// Step 1: receive worker public key
-	in, err := stream.Recv()
+	in, err := stream.Receive()
 	if err != nil {
 		return fmt.Errorf("recv worker challenge: %w", err)
 	}
@@ -89,13 +94,13 @@ func (g *grpcService) Handshake(stream pb.Mirum_HandshakeServer) error {
 	}
 
 	// Look up the worker in the database
-	worker, err := g.srv.db.LookupWorker(stream.Context(), wc.GetPublicKey())
+	worker, err := g.srv.db.LookupWorker(ctx, wc.GetPublicKey())
 	if err != nil {
 		return g.reject(stream, "unknown worker")
 	}
 
 	// Extract TLS EKM for channel binding (nil if no TLS)
-	ekm := g.extractEKM(stream.Context())
+	ekm := g.extractEKM(ctx)
 
 	hs := protocol.NewServerHandshake()
 
@@ -116,7 +121,7 @@ func (g *grpcService) Handshake(stream pb.Mirum_HandshakeServer) error {
 	}
 
 	// Step 3: receive worker signature + metadata
-	in, err = stream.Recv()
+	in, err = stream.Receive()
 	if err != nil {
 		return fmt.Errorf("recv worker proof: %w", err)
 	}
@@ -148,13 +153,13 @@ func (g *grpcService) Handshake(stream pb.Mirum_HandshakeServer) error {
 	)
 
 	// Step 4: accept
-	if id, ok := stream.Context().Value(connIDKey{}).(uint64); ok {
-		g.authedConns.Store(id, true)
+	if conn, ok := ctx.Value(connKey{}).(net.Conn); ok {
+		g.authedConns.Store(conn, true)
 	}
 	return g.sendResult(stream, nil, warnings)
 }
 
-func (g *grpcService) sendResult(stream pb.Mirum_HandshakeServer, errMsg *string, warnings []string) error {
+func (g *grpcService) sendResult(stream *connect.BidiStream[pb.HandshakeIn, pb.HandshakeOut], errMsg *string, warnings []string) error {
 	return stream.Send(&pb.HandshakeOut{
 		Step: &pb.HandshakeOut_ServerResult{
 			ServerResult: &pb.ServerResult{
@@ -167,95 +172,112 @@ func (g *grpcService) sendResult(stream pb.Mirum_HandshakeServer, errMsg *string
 	})
 }
 
-func (g *grpcService) reject(stream pb.Mirum_HandshakeServer, reason string) error {
+func (g *grpcService) reject(stream *connect.BidiStream[pb.HandshakeIn, pb.HandshakeOut], reason string) error {
 	if err := g.sendResult(stream, &reason, nil); err != nil {
 		return err
 	}
 	return fmt.Errorf("%s", reason)
 }
 
-func (g *grpcService) requireAuth(ctx context.Context, method string) error {
-	if method == pb.Mirum_Handshake_FullMethodName {
+func (g *grpcService) requireAuth(ctx context.Context, procedure string) error {
+	if procedure == pbconnect.MirumHandshakeProcedure {
 		return nil
 	}
-	id, ok := ctx.Value(connIDKey{}).(uint64)
+	conn, ok := ctx.Value(connKey{}).(net.Conn)
 	if !ok {
-		return status.Error(codes.Unauthenticated, "handshake required")
+		return connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("handshake required"))
 	}
-	if _, ok := g.authedConns.Load(id); !ok {
-		return status.Error(codes.Unauthenticated, "handshake required")
+	if _, ok := g.authedConns.Load(conn); !ok {
+		return connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("handshake required"))
 	}
 	return nil
 }
 
-func (g *grpcService) unaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	if err := g.requireAuth(ctx, info.FullMethod); err != nil {
-		return nil, err
+// WrapUnary implements connect.Interceptor for unary RPCs (Poll, Complete).
+func (g *grpcService) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		if err := g.requireAuth(ctx, req.Spec().Procedure); err != nil {
+			return nil, err
+		}
+		return next(ctx, req)
 	}
-	return handler(ctx, req)
 }
 
-func (g *grpcService) streamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	if err := g.requireAuth(ss.Context(), info.FullMethod); err != nil {
-		return err
-	}
-	if info.FullMethod == pb.Mirum_Handshake_FullMethodName {
-		done := make(chan error, 1)
-		go func() { done <- handler(srv, ss) }()
-		select {
-		case err := <-done:
+// WrapStreamingClient is a no-op (server-side only).
+func (g *grpcService) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return next
+}
+
+// WrapStreamingHandler implements connect.Interceptor for streaming RPCs (Handshake).
+func (g *grpcService) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
+		if err := g.requireAuth(ctx, conn.Spec().Procedure); err != nil {
 			return err
-		case <-time.After(30 * time.Second):
-			return fmt.Errorf("handshake timeout")
 		}
-	}
-	return handler(srv, ss)
-}
-
-// connTracker implements stats.Handler to clean up authedPeers on disconnect.
-type connTracker struct {
-	stats.Handler
-	gsrv *grpcService
-}
-
-func (t *connTracker) TagConn(ctx context.Context, info *stats.ConnTagInfo) context.Context {
-	id := t.gsrv.nextConnID.Add(1)
-	return context.WithValue(ctx, connIDKey{}, id)
-}
-
-func (t *connTracker) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
-	return ctx
-}
-
-func (t *connTracker) HandleRPC(ctx context.Context, s stats.RPCStats) {}
-
-func (t *connTracker) HandleConn(ctx context.Context, s stats.ConnStats) {
-	if _, ok := s.(*stats.ConnEnd); ok {
-		if id, ok := ctx.Value(connIDKey{}).(uint64); ok {
-			t.gsrv.authedConns.Delete(id)
-			slog.Debug("peer disconnected", "conn", id)
+		if conn.Spec().Procedure == pbconnect.MirumHandshakeProcedure {
+			done := make(chan error, 1)
+			go func() { done <- next(ctx, conn) }()
+			select {
+			case err := <-done:
+				return err
+			case <-time.After(30 * time.Second):
+				return fmt.Errorf("handshake timeout")
+			}
 		}
+		return next(ctx, conn)
 	}
 }
 
-// extractEKM returns TLS Exported Keying Material from the peer context,
+// connContext stores the net.Conn in the context for connection tracking.
+func (g *grpcService) connContext(ctx context.Context, c net.Conn) context.Context {
+	return context.WithValue(ctx, connKey{}, c)
+}
+
+// connState cleans up authedConns when a connection closes.
+func (g *grpcService) connState(c net.Conn, state http.ConnState) {
+	if state == http.StateClosed {
+		g.authedConns.Delete(c)
+		slog.Debug("peer disconnected")
+	}
+}
+
+// extractEKM returns TLS Exported Keying Material from the context,
 // or nil if TLS is not enabled.
 func (g *grpcService) extractEKM(ctx context.Context) []byte {
 	if !g.tls {
 		return nil
 	}
-	p, ok := peer.FromContext(ctx)
-	if !ok {
+	state, ok := ctx.Value(tlsStateKey{}).(*tls.ConnectionState)
+	if !ok || state == nil {
 		return nil
 	}
-	ti, ok := p.AuthInfo.(credentials.TLSInfo)
-	if !ok {
-		return nil
-	}
-	ekm, err := ti.State.ExportKeyingMaterial(protocol.EKMLabel, nil, protocol.EKMLength)
+	ekm, err := state.ExportKeyingMaterial(protocol.EKMLabel, nil, protocol.EKMLength)
 	if err != nil {
 		slog.Warn("failed to export keying material", "err", err)
 		return nil
 	}
 	return ekm
+}
+
+// requireGRPC rejects requests that do not use the gRPC wire protocol.
+func requireGRPC(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ct := r.Header.Get("Content-Type")
+		if ct != "application/grpc" && !strings.HasPrefix(ct, "application/grpc+") {
+			http.Error(w, "only gRPC protocol is supported", http.StatusUnsupportedMediaType)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// tlsMiddleware injects the TLS connection state into the request context.
+func tlsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS != nil {
+			ctx := context.WithValue(r.Context(), tlsStateKey{}, r.TLS)
+			r = r.WithContext(ctx)
+		}
+		next.ServeHTTP(w, r)
+	})
 }

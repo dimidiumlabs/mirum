@@ -32,7 +32,7 @@ func main() {
 	backoff := protocol.NewBackoff()
 
 	for ctx.Err() == nil {
-		c, err := connect(ctx, cfg)
+		c, err := dial(ctx, cfg)
 		if err != nil {
 			slog.Error("connect failed", "err", err)
 			if !backoff.Wait(ctx) {

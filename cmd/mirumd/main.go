@@ -5,7 +5,9 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -14,15 +16,16 @@ import (
 	"os"
 	"time"
 
+	"connectrpc.com/connect"
 	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/forges"
+
 	"dimidiumlabs/mirum/internal/protocol/pb"
+	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
 	"dimidiumlabs/mirum/internal/supervisor"
 
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -176,6 +179,7 @@ func daemon(configFile, socketFlag string) {
 		tlsCfg = &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS13, // required for reliable EKM (channel binding)
+			NextProtos:   []string{"h2"},   // required for gRPC over TLS (ALPN)
 		}
 		slog.Info("TLS enabled", "cert", cfg.TLSCert)
 	}
@@ -191,6 +195,7 @@ func daemon(configFile, socketFlag string) {
 	}
 
 	if tlsCfg != nil {
+		grpcLn = tls.NewListener(grpcLn, tlsCfg)
 		webLn = tls.NewListener(webLn, tlsCfg)
 	}
 
@@ -203,13 +208,13 @@ func daemon(configFile, socketFlag string) {
 		}
 	}()
 	go func() {
-		if err := grpcSrv.Serve(grpcLn); err != nil {
+		if err := grpcSrv.Serve(grpcLn); err != nil && err != http.ErrServerClosed {
 			slog.Error("grpc server failed", "err", err)
 			os.Exit(1)
 		}
 	}()
 	go func() {
-		if err := adminSrv.Serve(adminLn); err != nil {
+		if err := adminSrv.Serve(adminLn); err != nil && err != http.ErrServerClosed {
 			slog.Error("admin server failed", "err", err)
 			os.Exit(1)
 		}
@@ -232,9 +237,9 @@ func daemon(configFile, socketFlag string) {
 
 	srv.Close()
 
-	adminSrv.GracefulStop()
+	adminSrv.Shutdown(context.Background())
 	wwwSrv.Shutdown(context.Background())
-	grpcSrv.GracefulStop()
+	grpcSrv.Shutdown(context.Background())
 }
 
 // listeners returns gRPC, web, and admin listeners.
@@ -280,37 +285,39 @@ func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 	return grpcLn, webLn, adminLn, nil
 }
 
-func adminClient(socketPath string) pb.AdminClient {
+func adminClient(socketPath string) pbconnect.AdminClient {
 	if socketPath == "" {
 		socketPath = "/run/mirumd/admin.sock"
 	}
-	conn, err := grpc.NewClient("unix://"+socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	return pbconnect.NewAdminClient(
+		&http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return net.Dial("unix", socketPath)
+				},
+			},
+		},
+		"http://localhost.unix",
 	)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	return pb.NewAdminClient(conn)
 }
 
 func userCreate(socketPath, email, password string) {
-	resp, err := adminClient(socketPath).CreateUser(context.Background(), &pb.CreateUserRequest{
+	resp, err := adminClient(socketPath).CreateUser(context.Background(), connect.NewRequest(&pb.CreateUserRequest{
 		Email:    email,
 		Password: password,
-	})
+	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println(resp.Id)
+	fmt.Println(resp.Msg.Id)
 }
 
 func userSetPassword(socketPath, email, password string) {
-	_, err := adminClient(socketPath).SetPassword(context.Background(), &pb.SetPasswordRequest{
+	_, err := adminClient(socketPath).SetPassword(context.Background(), connect.NewRequest(&pb.SetPasswordRequest{
 		Email:    email,
 		Password: password,
-	})
+	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -319,9 +326,9 @@ func userSetPassword(socketPath, email, password string) {
 }
 
 func userDelete(socketPath, email string) {
-	_, err := adminClient(socketPath).DeleteUser(context.Background(), &pb.DeleteUserRequest{
+	_, err := adminClient(socketPath).DeleteUser(context.Background(), connect.NewRequest(&pb.DeleteUserRequest{
 		Email: email,
-	})
+	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -330,25 +337,35 @@ func userDelete(socketPath, email string) {
 }
 
 func workerAdd(socketPath, pubkeyB64 string) {
-	pubkey, err := base64.StdEncoding.DecodeString(pubkeyB64)
+	der, err := base64.StdEncoding.DecodeString(pubkeyB64)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "invalid base64:", err)
 		os.Exit(1)
 	}
-	resp, err := adminClient(socketPath).WorkerAdd(context.Background(), &pb.WorkerAddRequest{
-		PublicKey: pubkey,
-	})
+	pubkey, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "invalid public key:", err)
+		os.Exit(1)
+	}
+	edKey, ok := pubkey.(ed25519.PublicKey)
+	if !ok {
+		fmt.Fprintln(os.Stderr, "not an ed25519 key")
+		os.Exit(1)
+	}
+	resp, err := adminClient(socketPath).WorkerAdd(context.Background(), connect.NewRequest(&pb.WorkerAddRequest{
+		PublicKey: edKey,
+	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println(resp.Id)
+	fmt.Println(resp.Msg.Id)
 }
 
 func workerRevoke(socketPath, id string) {
-	_, err := adminClient(socketPath).WorkerRevoke(context.Background(), &pb.WorkerRevokeRequest{
+	_, err := adminClient(socketPath).WorkerRevoke(context.Background(), connect.NewRequest(&pb.WorkerRevokeRequest{
 		Id: id,
-	})
+	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -357,12 +374,12 @@ func workerRevoke(socketPath, id string) {
 }
 
 func workerList(socketPath string) {
-	resp, err := adminClient(socketPath).WorkerList(context.Background(), &pb.WorkerListRequest{})
+	resp, err := adminClient(socketPath).WorkerList(context.Background(), connect.NewRequest(&pb.WorkerListRequest{}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	for _, w := range resp.Workers {
+	for _, w := range resp.Msg.Workers {
 		created := w.CreatedAt.AsTime().Format(time.DateOnly)
 		fmt.Printf("%s\t%s\t%s\n", w.Id, base64.StdEncoding.EncodeToString(w.PublicKey), created)
 	}
