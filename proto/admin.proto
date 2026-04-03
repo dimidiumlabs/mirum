@@ -10,36 +10,128 @@ option go_package = "dimidiumlabs/mirum/internal/protocol/pb";
 import "google/protobuf/timestamp.proto";
 
 service Admin {
-  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
-  rpc SetPassword(SetPasswordRequest) returns (SetPasswordResponse);
-  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+  rpc UserCreate(UserCreateRequest) returns (UserCreateResponse);
+  rpc UserDelete(UserDeleteRequest) returns (UserDeleteResponse);
+  rpc UserSetPassword(UserSetPasswordRequest) returns (UserSetPasswordResponse);
 
+  rpc OrgList(OrgListRequest) returns (OrgListResponse);
+  rpc OrgCreate(OrgCreateRequest) returns (OrgCreateResponse);
+  rpc OrgDelete(OrgDeleteRequest) returns (OrgDeleteResponse);
+  rpc OrgRename(OrgRenameRequest) returns (OrgRenameResponse);
+
+  rpc OrgMemberList(OrgMemberListRequest) returns (OrgMemberListResponse);
+  rpc OrgMemberAdd(OrgMemberAddRequest) returns (OrgMemberAddResponse);
+  rpc OrgMemberRemove(OrgMemberRemoveRequest) returns (OrgMemberRemoveResponse);
+  rpc OrgMemberSetRole(OrgMemberSetRoleRequest) returns (OrgMemberSetRoleResponse);
+
+  rpc WorkerList(WorkerListRequest) returns (WorkerListResponse);
   rpc WorkerAdd(WorkerAddRequest) returns (WorkerAddResponse);
   rpc WorkerRevoke(WorkerRevokeRequest) returns (WorkerRevokeResponse);
-  rpc WorkerList(WorkerListRequest) returns (WorkerListResponse);
 }
 
-message CreateUserRequest {
+message UserCreateRequest {
   string email = 1;
   string password = 2;
 }
 
-message CreateUserResponse {
+message UserCreateResponse {
   string id = 1;
 }
 
-message SetPasswordRequest {
+message UserSetPasswordRequest {
   string email = 1;
   string password = 2;
 }
 
-message SetPasswordResponse {}
+message UserSetPasswordResponse {}
 
-message DeleteUserRequest {
+message UserDeleteRequest {
   string email = 1;
 }
 
-message DeleteUserResponse {}
+message UserDeleteResponse {}
+
+// Organization management
+
+message OrgCreateRequest {
+  string name = 1;
+  string slug = 2;
+  bool public = 3;
+  string owner_email = 4;
+}
+
+message OrgCreateResponse {
+  string id = 1;
+}
+
+message OrgDeleteRequest {
+  string slug = 1;
+}
+
+message OrgDeleteResponse {}
+
+message OrgRenameRequest {
+  string slug = 1;
+  string new_name = 2;
+  string new_slug = 3;
+}
+
+message OrgRenameResponse {}
+
+message OrgListRequest {
+  optional string user_email = 1;
+}
+
+message OrgListResponse {
+  repeated Org organizations = 1;
+}
+
+message Org {
+  string id = 1;
+  string name = 2;
+  string slug = 3;
+  bool public = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// Organization members
+
+message OrgMemberAddRequest {
+  string org_slug = 1;
+  string email = 2;
+  string role = 3;
+}
+
+message OrgMemberAddResponse {}
+
+message OrgMemberRemoveRequest {
+  string org_slug = 1;
+  string email = 2;
+}
+
+message OrgMemberRemoveResponse {}
+
+message OrgMemberSetRoleRequest {
+  string org_slug = 1;
+  string email = 2;
+  string role = 3;
+}
+
+message OrgMemberSetRoleResponse {}
+
+message OrgMemberListRequest {
+  string org_slug = 1;
+}
+
+message OrgMemberListResponse {
+  repeated OrgMemberInfo members = 1;
+}
+
+message OrgMemberInfo {
+  string email = 1;
+  string role = 2;
+  google.protobuf.Timestamp joined_at = 3;
+}
 
 message WorkerAddRequest {
   bytes public_key = 1;
@@ -66,3 +158,4 @@ message Worker {
   bytes public_key = 2;
   google.protobuf.Timestamp created_at = 3;
 }
+

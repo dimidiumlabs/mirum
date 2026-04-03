@@ -222,5 +222,6 @@ func (c *client) handshake(ctx context.Context) error {
 
 	v := sr.GetServerVersion()
 	slog.Info("handshake ok", "server_version", fmt.Sprintf("%d.%d.%d", v.GetMajor(), v.GetMinor(), v.GetPatch()))
+
 	return nil
 }

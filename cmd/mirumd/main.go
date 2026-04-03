@@ -14,11 +14,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/user"
+	"strconv"
 	"time"
 
-	"connectrpc.com/connect"
 	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/forges"
+
+	"connectrpc.com/connect"
 
 	"dimidiumlabs/mirum/internal/protocol/pb"
 	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
@@ -126,6 +129,132 @@ func main() {
 		},
 	}
 	workerCmd.AddCommand(workerListCmd)
+
+	orgCmd := &cobra.Command{Use: "org", Short: "Manage organizations"}
+	root.AddCommand(orgCmd)
+
+	orgCreateCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create an organization",
+		Run: func(cmd *cobra.Command, args []string) {
+			name, _ := cmd.Flags().GetString("name")
+			slug, _ := cmd.Flags().GetString("slug")
+			public, _ := cmd.Flags().GetBool("public")
+			owner, _ := cmd.Flags().GetString("owner")
+			orgCreate(socketPath, name, slug, public, owner)
+		},
+	}
+	orgCmd.AddCommand(orgCreateCmd)
+	orgCreateCmd.Flags().String("name", "", "display name")
+	orgCreateCmd.Flags().String("slug", "", "URL slug")
+	orgCreateCmd.Flags().Bool("public", false, "public visibility")
+	orgCreateCmd.Flags().String("owner", "", "owner email")
+	_ = orgCreateCmd.MarkFlagRequired("name")
+	_ = orgCreateCmd.MarkFlagRequired("slug")
+	_ = orgCreateCmd.MarkFlagRequired("owner")
+
+	orgDeleteCmd := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete an organization",
+		Run: func(cmd *cobra.Command, args []string) {
+			slug, _ := cmd.Flags().GetString("slug")
+			orgDelete(socketPath, slug)
+		},
+	}
+	orgCmd.AddCommand(orgDeleteCmd)
+	orgDeleteCmd.Flags().String("slug", "", "org slug")
+	_ = orgDeleteCmd.MarkFlagRequired("slug")
+
+	orgRenameCmd := &cobra.Command{
+		Use:   "rename",
+		Short: "Rename an organization",
+		Run: func(cmd *cobra.Command, args []string) {
+			slug, _ := cmd.Flags().GetString("slug")
+			newName, _ := cmd.Flags().GetString("name")
+			newSlug, _ := cmd.Flags().GetString("new-slug")
+			orgRename(socketPath, slug, newName, newSlug)
+		},
+	}
+	orgCmd.AddCommand(orgRenameCmd)
+	orgRenameCmd.Flags().String("slug", "", "current slug")
+	orgRenameCmd.Flags().String("name", "", "new display name")
+	orgRenameCmd.Flags().String("new-slug", "", "new slug")
+	_ = orgRenameCmd.MarkFlagRequired("slug")
+	_ = orgRenameCmd.MarkFlagRequired("name")
+	_ = orgRenameCmd.MarkFlagRequired("new-slug")
+
+	orgListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List organizations",
+		Run: func(cmd *cobra.Command, args []string) {
+			email, _ := cmd.Flags().GetString("user")
+			orgList(socketPath, email)
+		},
+	}
+	orgCmd.AddCommand(orgListCmd)
+	orgListCmd.Flags().String("user", "", "filter by user email (optional)")
+
+	orgMemberAddCmd := &cobra.Command{
+		Use:   "add-member",
+		Short: "Add a member to an organization",
+		Run: func(cmd *cobra.Command, args []string) {
+			org, _ := cmd.Flags().GetString("org")
+			email, _ := cmd.Flags().GetString("email")
+			role, _ := cmd.Flags().GetString("role")
+			orgMemberAdd(socketPath, org, email, role)
+		},
+	}
+	orgCmd.AddCommand(orgMemberAddCmd)
+	orgMemberAddCmd.Flags().String("org", "", "org slug")
+	orgMemberAddCmd.Flags().String("email", "", "user email")
+	orgMemberAddCmd.Flags().String("role", "member", "role (owner, admin, member)")
+	_ = orgMemberAddCmd.MarkFlagRequired("org")
+	_ = orgMemberAddCmd.MarkFlagRequired("email")
+
+	orgMemberRemoveCmd := &cobra.Command{
+		Use:   "remove-member",
+		Short: "Remove a member from an organization",
+		Run: func(cmd *cobra.Command, args []string) {
+			org, _ := cmd.Flags().GetString("org")
+			email, _ := cmd.Flags().GetString("email")
+			orgMemberRemove(socketPath, org, email)
+		},
+	}
+	orgCmd.AddCommand(orgMemberRemoveCmd)
+	orgMemberRemoveCmd.Flags().String("org", "", "org slug")
+	orgMemberRemoveCmd.Flags().String("email", "", "user email")
+	_ = orgMemberRemoveCmd.MarkFlagRequired("org")
+	_ = orgMemberRemoveCmd.MarkFlagRequired("email")
+
+	orgSetRoleCmd := &cobra.Command{
+		Use:   "set-role",
+		Short: "Change a member's role",
+		Run: func(cmd *cobra.Command, args []string) {
+			org, _ := cmd.Flags().GetString("org")
+			email, _ := cmd.Flags().GetString("email")
+			role, _ := cmd.Flags().GetString("role")
+			orgMemberSetRole(socketPath, org, email, role)
+		},
+	}
+	orgCmd.AddCommand(orgSetRoleCmd)
+	orgSetRoleCmd.Flags().String("org", "", "org slug")
+	orgSetRoleCmd.Flags().String("email", "", "user email")
+	orgSetRoleCmd.Flags().String("role", "", "new role (owner, admin, member)")
+	_ = orgSetRoleCmd.MarkFlagRequired("org")
+	_ = orgSetRoleCmd.MarkFlagRequired("email")
+	_ = orgSetRoleCmd.MarkFlagRequired("role")
+
+	orgMemberListCmd := &cobra.Command{
+		Use:   "list-members",
+		Short: "List members of an organization",
+		Run: func(cmd *cobra.Command, args []string) {
+			org, _ := cmd.Flags().GetString("org")
+			orgMemberList(socketPath, org)
+		},
+	}
+	orgCmd.AddCommand(orgMemberListCmd)
+	orgMemberListCmd.Flags().String("org", "", "org slug")
+	_ = orgMemberListCmd.MarkFlagRequired("org")
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -237,9 +366,9 @@ func daemon(configFile, socketFlag string) {
 
 	srv.Close()
 
-	adminSrv.Shutdown(context.Background())
 	wwwSrv.Shutdown(context.Background())
 	grpcSrv.Shutdown(context.Background())
+	adminSrv.Shutdown(context.Background())
 }
 
 // listeners returns gRPC, web, and admin listeners.
@@ -273,6 +402,7 @@ func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 		}
 	}()
 
+	_ = os.Remove(cfg.AdminSocket)
 	if adminLn, err = net.Listen("unix", cfg.AdminSocket); err != nil {
 		return nil, nil, nil, err
 	}
@@ -281,6 +411,24 @@ func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 			_ = adminLn.Close()
 		}
 	}()
+
+	grp, err := user.LookupGroup("workerd")
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("lookup group workerd: %w", err)
+	}
+
+	gid, err := strconv.Atoi(grp.Gid)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("parse gid: %w", err)
+	}
+
+	if err = os.Chown(cfg.AdminSocket, 0, gid); err != nil {
+		return nil, nil, nil, fmt.Errorf("chown admin socket: %w", err)
+	}
+
+	if err = os.Chmod(cfg.AdminSocket, 0660); err != nil {
+		return nil, nil, nil, fmt.Errorf("chmod admin socket: %w", err)
+	}
 
 	return grpcLn, webLn, adminLn, nil
 }
@@ -302,7 +450,7 @@ func adminClient(socketPath string) pbconnect.AdminClient {
 }
 
 func userCreate(socketPath, email, password string) {
-	resp, err := adminClient(socketPath).CreateUser(context.Background(), connect.NewRequest(&pb.CreateUserRequest{
+	resp, err := adminClient(socketPath).UserCreate(context.Background(), connect.NewRequest(&pb.UserCreateRequest{
 		Email:    email,
 		Password: password,
 	}))
@@ -314,7 +462,7 @@ func userCreate(socketPath, email, password string) {
 }
 
 func userSetPassword(socketPath, email, password string) {
-	_, err := adminClient(socketPath).SetPassword(context.Background(), connect.NewRequest(&pb.SetPasswordRequest{
+	_, err := adminClient(socketPath).UserSetPassword(context.Background(), connect.NewRequest(&pb.UserSetPasswordRequest{
 		Email:    email,
 		Password: password,
 	}))
@@ -326,7 +474,7 @@ func userSetPassword(socketPath, email, password string) {
 }
 
 func userDelete(socketPath, email string) {
-	_, err := adminClient(socketPath).DeleteUser(context.Background(), connect.NewRequest(&pb.DeleteUserRequest{
+	_, err := adminClient(socketPath).UserDelete(context.Background(), connect.NewRequest(&pb.UserDeleteRequest{
 		Email: email,
 	}))
 	if err != nil {
@@ -382,5 +530,113 @@ func workerList(socketPath string) {
 	for _, w := range resp.Msg.Workers {
 		created := w.CreatedAt.AsTime().Format(time.DateOnly)
 		fmt.Printf("%s\t%s\t%s\n", w.Id, base64.StdEncoding.EncodeToString(w.PublicKey), created)
+	}
+}
+
+func orgCreate(socketPath, name, slug string, public bool, ownerEmail string) {
+	resp, err := adminClient(socketPath).OrgCreate(context.Background(), connect.NewRequest(&pb.OrgCreateRequest{
+		Name:       name,
+		Slug:       slug,
+		Public:     public,
+		OwnerEmail: ownerEmail,
+	}))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println(resp.Msg.Id)
+}
+
+func orgDelete(socketPath, slug string) {
+	_, err := adminClient(socketPath).OrgDelete(context.Background(), connect.NewRequest(&pb.OrgDeleteRequest{
+		Slug: slug,
+	}))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("ok")
+}
+
+func orgRename(socketPath, slug, newName, newSlug string) {
+	_, err := adminClient(socketPath).OrgRename(context.Background(), connect.NewRequest(&pb.OrgRenameRequest{
+		Slug:    slug,
+		NewName: newName,
+		NewSlug: newSlug,
+	}))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("ok")
+}
+
+func orgList(socketPath, email string) {
+	req := &pb.OrgListRequest{}
+	if email != "" {
+		req.UserEmail = &email
+	}
+	resp, err := adminClient(socketPath).OrgList(context.Background(), connect.NewRequest(req))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for _, o := range resp.Msg.Organizations {
+		visibility := "private"
+		if o.Public {
+			visibility = "public"
+		}
+		fmt.Printf("%s\t%s\t%s\t%s\n", o.Slug, o.Name, visibility, o.CreatedAt.AsTime().Format(time.DateOnly))
+	}
+}
+
+func orgMemberAdd(socketPath, orgSlug, email, role string) {
+	_, err := adminClient(socketPath).OrgMemberAdd(context.Background(), connect.NewRequest(&pb.OrgMemberAddRequest{
+		OrgSlug: orgSlug,
+		Email:   email,
+		Role:    role,
+	}))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("ok")
+}
+
+func orgMemberRemove(socketPath, orgSlug, email string) {
+	_, err := adminClient(socketPath).OrgMemberRemove(context.Background(), connect.NewRequest(&pb.OrgMemberRemoveRequest{
+		OrgSlug: orgSlug,
+		Email:   email,
+	}))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("ok")
+}
+
+func orgMemberSetRole(socketPath, orgSlug, email, role string) {
+	_, err := adminClient(socketPath).OrgMemberSetRole(context.Background(), connect.NewRequest(&pb.OrgMemberSetRoleRequest{
+		OrgSlug: orgSlug,
+		Email:   email,
+		Role:    role,
+	}))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("ok")
+}
+
+func orgMemberList(socketPath, orgSlug string) {
+	resp, err := adminClient(socketPath).OrgMemberList(context.Background(), connect.NewRequest(&pb.OrgMemberListRequest{
+		OrgSlug: orgSlug,
+	}))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for _, m := range resp.Msg.Members {
+		fmt.Printf("%s\t%s\t%s\n", m.Email, m.Role, m.JoinedAt.AsTime().Format(time.DateOnly))
 	}
 }

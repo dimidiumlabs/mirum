@@ -83,7 +83,7 @@ func wwwRoutes(srv *server) http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		var data struct{ Email, CSRF string }
 		if c, err := r.Cookie("session"); err == nil {
-			if sess, err := srv.db.GetSession(r.Context(), c.Value); err == nil {
+			if sess, err := srv.db.UserGetSession(r.Context(), c.Value); err == nil {
 				data.Email = sess.Email
 				data.CSRF = csrfToken(w, r)
 			}
@@ -132,7 +132,7 @@ func wwwRoutes(srv *server) http.Handler {
 		email := r.FormValue("email")
 		password := r.FormValue("password")
 
-		userID, err := srv.db.VerifyPassword(r.Context(), email, password, []byte(srv.cfg.Pepper))
+		userID, err := srv.db.UserVerifyPassword(r.Context(), email, password, []byte(srv.cfg.Pepper))
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			loginTmpl.ExecuteTemplate(w, "layout", map[string]string{
@@ -142,7 +142,7 @@ func wwwRoutes(srv *server) http.Handler {
 			return
 		}
 
-		token, err := srv.db.CreateSession(r.Context(), userID)
+		token, err := srv.db.UserCreateSession(r.Context(), userID)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
@@ -166,7 +166,7 @@ func wwwRoutes(srv *server) http.Handler {
 			return
 		}
 		if c, err := r.Cookie("session"); err == nil {
-			srv.db.DeleteSession(r.Context(), c.Value)
+			srv.db.UserDeleteSession(r.Context(), c.Value)
 		}
 		clearCookie(w, "session")
 		clearCookie(w, "csrf")
