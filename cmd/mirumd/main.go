@@ -13,8 +13,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/user"
-	"strconv"
 	"time"
 
 	"connectrpc.com/connect"
@@ -417,20 +415,6 @@ func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 			_ = adminLn.Close()
 		}
 	}()
-
-	grp, err := user.LookupGroup("workerd")
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("lookup group workerd: %w", err)
-	}
-
-	gid, err := strconv.Atoi(grp.Gid)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("parse gid: %w", err)
-	}
-
-	if err = os.Chown(cfg.AdminSocket, 0, gid); err != nil {
-		return nil, nil, nil, fmt.Errorf("chown admin socket: %w", err)
-	}
 
 	if err = os.Chmod(cfg.AdminSocket, 0o660); err != nil {
 		return nil, nil, nil, fmt.Errorf("chmod admin socket: %w", err)
