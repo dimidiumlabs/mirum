@@ -15,7 +15,6 @@ require (
 	github.com/spf13/cobra v1.8.0
 	go.starlark.net v0.0.0-20260326113308-fadfc96def35
 	golang.org/x/crypto v0.49.0
-	golang.org/x/net v0.52.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 )

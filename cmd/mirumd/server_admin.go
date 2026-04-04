@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 
 	"connectrpc.com/connect"
@@ -19,14 +20,22 @@ import (
 	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
 )
 
-func NewAdminServer(srv *server) *http.Server {
+func NewAdminServer(ctx context.Context, srv *server) *http.Server {
 	as := &adminService{srv: srv}
+
 	path, handler := pbconnect.NewAdminHandler(as,
 		connect.WithInterceptors(validate.NewInterceptor()),
 	)
+
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
-	return &http.Server{Handler: mux}
+
+	return &http.Server{
+		Handler: mux,
+		BaseContext: func(_ net.Listener) context.Context {
+			return ctx
+		},
+	}
 }
 
 type adminService struct {

@@ -6,12 +6,14 @@ package protocol
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
+	"net/url"
 	"os"
-	"slices"
 	"time"
 )
 
@@ -21,24 +23,50 @@ var (
 	ErrKeyNotPKIX    = errors.New("key file does not contain a PKIX public key")
 	ErrKeyNotEd25519 = errors.New("key file does not contain an ed25519 key")
 
-	ErrClockSkew        = errors.New("clock skew too large")
-	ErrInvalidNonce     = errors.New("invalid nonce size")
-	ErrServerRejected   = errors.New("server rejected handshake")
-	ErrInvalidPublicKey = errors.New("invalid public key size")
-	ErrInvalidSignature = errors.New("invalid signature")
+	ErrClockSkew = errors.New("clock skew too large")
 )
 
-const NonceSize = 32
+// WorkerMeta describes the worker for embedding in a self-signed X.509
+// certificate as a URI SAN (mirum:worker?name=...&version=...&...).
+type WorkerMeta struct {
+	Name    string
+	Version string
+	Os      string
+	Arch    string
+	Runtime string
+}
 
-const (
-	EKMLabel  = "mirum-handshake"
-	EKMLength = 32
-)
+// URI encodes worker metadata as a mirum: URI.
+func (m *WorkerMeta) URI() *url.URL {
+	return &url.URL{
+		Scheme: "mirum",
+		Opaque: "worker",
+		RawQuery: url.Values{
+			"name":    {m.Name},
+			"version": {m.Version},
+			"os":      {m.Os},
+			"arch":    {m.Arch},
+			"runtime": {m.Runtime},
+		}.Encode(),
+	}
+}
 
-func generateNonce() ([]byte, error) {
-	nonce := make([]byte, NonceSize)
-	_, err := rand.Read(nonce)
-	return nonce, err
+// ParseWorkerMeta extracts WorkerMeta from a certificate's URI SANs.
+// Returns nil if no mirum:worker URI is found.
+func ParseWorkerMeta(cert *x509.Certificate) *WorkerMeta {
+	for _, u := range cert.URIs {
+		if u.Scheme == "mirum" && u.Opaque == "worker" {
+			q := u.Query()
+			return &WorkerMeta{
+				Name:    q.Get("name"),
+				Version: q.Get("version"),
+				Os:      q.Get("os"),
+				Arch:    q.Get("arch"),
+				Runtime: q.Get("runtime"),
+			}
+		}
+	}
+	return nil
 }
 
 // LoadPrivateKey reads a PEM-encoded PKCS8 ed25519 private key from path.
@@ -66,95 +94,33 @@ func LoadPrivateKey(path string) (ed25519.PrivateKey, error) {
 	return edKey, nil
 }
 
-// LoadPublicKey reads a PEM-encoded PKIX ed25519 public key from path.
-func LoadPublicKey(path string) (ed25519.PublicKey, error) {
-	data, err := os.ReadFile(path)
+// SelfSignedCert generates a self-signed X.509 certificate from an ed25519
+// private key with worker metadata encoded as a URI SAN. The server extracts
+// the public key for authentication, metadata from the URI, and uses NotBefore
+// for clock skew detection.
+func SelfSignedCert(key ed25519.PrivateKey, meta *WorkerMeta) (tls.Certificate, error) {
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return nil, fmt.Errorf("read key: %w", err)
+		return tls.Certificate{}, fmt.Errorf("generate serial: %w", err)
 	}
 
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, ErrKeyNotPEM
+	now := time.Now()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		NotBefore:    now,
+		NotAfter:     now.Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		URIs:         []*url.URL{meta.URI()},
 	}
 
-	key, err := x509.ParsePKIXPublicKey(block.Bytes)
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrKeyNotPKIX, err)
+		return tls.Certificate{}, fmt.Errorf("create certificate: %w", err)
 	}
 
-	edKey, ok := key.(ed25519.PublicKey)
-	if !ok {
-		return nil, ErrKeyNotEd25519
-	}
-
-	return edKey, nil
-}
-
-// ServerHandshake holds state for the server side of the handshake protocol.
-type ServerHandshake struct {
-	publicKey   ed25519.PublicKey
-	serverNonce []byte
-	ekm         []byte // TLS Exported Keying Material, nil if not bound
-}
-
-func NewServerHandshake() *ServerHandshake {
-	return &ServerHandshake{}
-}
-
-// Challenge validates the worker public key and returns a random nonce.
-// If ekm is non-nil, channel binding is enabled and the EKM will be
-// included in the signed data during verification.
-func (h *ServerHandshake) Challenge(publicKey, ekm []byte) (serverNonce []byte, err error) {
-	if len(publicKey) != ed25519.PublicKeySize {
-		return nil, ErrInvalidPublicKey
-	}
-
-	h.publicKey = publicKey
-	h.ekm = ekm
-	h.serverNonce, err = generateNonce()
-	if err != nil {
-		return nil, err
-	}
-
-	return h.serverNonce, nil
-}
-
-// Verify checks the worker's ed25519 signature and clock skew.
-// The signed data is nonce (or nonce || ekm if channel binding is enabled).
-func (h *ServerHandshake) Verify(signature []byte, workerTime time.Time) error {
-	signed := slices.Concat(h.serverNonce, h.ekm)
-	if !ed25519.Verify(h.publicKey, signed, signature) {
-		return ErrInvalidSignature
-	}
-
-	skew := time.Since(workerTime).Abs()
-	if skew > time.Minute {
-		return ErrClockSkew
-	}
-
-	return nil
-}
-
-// ClientHandshake holds state for the client side of the handshake protocol.
-type ClientHandshake struct {
-	privateKey ed25519.PrivateKey
-}
-
-func NewClientHandshake(privateKey ed25519.PrivateKey) *ClientHandshake {
-	return &ClientHandshake{privateKey: privateKey}
-}
-
-// PublicKey returns the 32-byte ed25519 public key.
-func (h *ClientHandshake) PublicKey() []byte {
-	return h.privateKey.Public().(ed25519.PublicKey)
-}
-
-// Sign signs the server nonce (and optional EKM) with the worker's private key.
-// If ekm is non-nil, the signed data is nonce || ekm.
-func (h *ClientHandshake) Sign(serverNonce, ekm []byte) ([]byte, error) {
-	if len(serverNonce) != NonceSize {
-		return nil, ErrInvalidNonce
-	}
-	return ed25519.Sign(h.privateKey, slices.Concat(serverNonce, ekm)), nil
+	return tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+	}, nil
 }

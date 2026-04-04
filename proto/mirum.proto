@@ -7,21 +7,17 @@ package mirum;
 
 option go_package = "dimidiumlabs/mirum/internal/protocol/pb";
 
-import "google/protobuf/timestamp.proto";
-
 // Describes the contract between the worker and the server.
 // GRPC is the only contract between them, so to implement your own worker,
 // you only need to implement this service.
+//
+// Authentication is handled via mTLS: the worker presents a self-signed
+// X.509 certificate containing its ed25519 public key. The server verifies
+// the key against its database during the TLS handshake.
+//
+// Worker metadata (name, version, os, arch) and clock skew detection
+// are embedded in the certificate (URI SAN and NotBefore).
 service Mirum {
-  // Handshake performs worker authentication via ed25519 challenge-response.
-  // The server will not accept any calls until a handshake is completed.
-  //
-  // Step 1 (W→S): WorkerChallenge  — worker sends its ed25519 public key.
-  // Step 2 (S→W): ServerChallenge  — server sends a random nonce.
-  // Step 3 (W→S): WorkerProof      — worker signs the nonce with its private key + metadata.
-  // Step 4 (S→W): ServerResult     — server accepts or rejects.
-  rpc Handshake(stream HandshakeIn) returns (stream HandshakeOut);
-
   // When a worker has free resources, it requests a task from the server.
   // The call will block if the server currently has no tasks.
   rpc Poll(PollRequest) returns (Task);
@@ -126,66 +122,7 @@ enum Arch {
   ARCH_OPENRISC = 32;
 }
 
-// Worker → Server
-message HandshakeIn {
-  oneof step {
-    WorkerChallenge worker_challenge = 1;  // step 1
-    WorkerProof worker_proof = 2;          // step 3
-  }
-}
-
-// Server → Worker
-message HandshakeOut {
-  oneof step {
-    ServerChallenge server_challenge = 1;  // step 2
-    ServerResult server_result = 2;        // step 4
-  }
-}
-
-// Step 1: Worker sends its ed25519 public key (32 bytes).
-message WorkerChallenge {
-  bytes public_key = 1;
-}
-
-// Step 2: Server sends a random nonce for the worker to sign.
-message ServerChallenge {
-  bytes nonce = 1;
-  bool binded = 2; // if true, worker must include TLS EKM in signed data
-}
-
-// Step 3: Worker signs the server nonce and sends metadata.
-message WorkerProof {
-  bytes signature = 1;
-
-  bytes id = 2;
-  string name = 3;
-  Version version = 4;
-
-  Os os = 5;
-  Arch arch = 6;
-  string runtime = 7;
-
-  google.protobuf.Timestamp worker_time = 8;
-}
-
-// Step 4: Server accepts or rejects the worker.
-message ServerResult {
-  // A successful handshake doesn't mean the worker can run:
-  // the versions may be incompatible, the clocks may be out of sync,
-  // server limits may have been exceeded, or something else entirely.
-  optional string error = 1;
-
-  Version server_version = 2;
-  google.protobuf.Timestamp server_time = 3;
-
-  // Non-fatal warnings for the worker to log (clock drift, upcoming
-  // deprecations, expiring secrets, known vulnerabilities, etc.).
-  repeated string warnings = 4;
-}
-
-message PollRequest {
-  
-}
+message PollRequest {}
 
 message Task {
   string id = 1;

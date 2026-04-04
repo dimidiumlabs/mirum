@@ -9,15 +9,11 @@ import (
 	"crypto/x509"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
-	"runtime/secret"
-	"sync"
-	"time"
+	"runtime"
 
 	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"dimidiumlabs/mirum/internal/executor"
 	"dimidiumlabs/mirum/internal/protocol"
@@ -26,70 +22,67 @@ import (
 )
 
 type client struct {
-	cfg     *config
-	http    *http.Client
-	handle  pbconnect.MirumClient
-	tlsMu   sync.Mutex
-	tlsConn *tls.Conn
+	cfg    *config
+	http   *http.Client
+	handle pbconnect.MirumClient
 }
 
 func dial(ctx context.Context, cfg *config) (*client, error) {
-	tlsCfg := &tls.Config{
-		MinVersion: tls.VersionTLS13, // required for reliable EKM (channel binding)
-		NextProtos: []string{"h2"},   // required for gRPC over TLS (ALPN)
+	name := cfg.Name
+	if name == "" {
+		name, _ = os.Hostname()
 	}
+
+	meta := &protocol.WorkerMeta{
+		Os:      runtime.GOOS,
+		Arch:    runtime.GOARCH,
+		Name:    name,
+		Runtime: workerRuntime,
+		Version: protocol.VersionString(),
+	}
+
+	tlsCfg := &tls.Config{
+		NextProtos: []string{"h2"},
+		MinVersion: tls.VersionTLS13,
+		GetClientCertificate: func(_ *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			key, err := protocol.LoadPrivateKey(cfg.KeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("load key: %w", err)
+			}
+
+			cert, err := protocol.SelfSignedCert(key, meta)
+			return &cert, err
+		},
+	}
+
 	if cfg.TLSCA != "" {
 		caCert, err := os.ReadFile(cfg.TLSCA)
 		if err != nil {
 			return nil, fmt.Errorf("read CA cert: %w", err)
 		}
+
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caCert) {
 			return nil, fmt.Errorf("failed to parse CA cert")
 		}
+
 		tlsCfg.RootCAs = pool
 	}
 
-	c := &client{cfg: cfg}
-
-	c.http = &http.Client{
-		Transport: &http.Transport{
-			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				conn, err := tls.Dial(network, addr, tlsCfg)
-				if err != nil {
-					return nil, err
-				}
-				c.tlsMu.Lock()
-				c.tlsConn = conn
-				c.tlsMu.Unlock()
-				return conn, nil
-			},
-			ForceAttemptHTTP2: true,
+	c := &client{
+		cfg: cfg,
+		http: &http.Client{
+			Transport: &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true},
 		},
 	}
 	c.handle = pbconnect.NewMirumClient(c.http, "https://"+cfg.Server, connect.WithGRPC())
 
 	slog.Info("dialing", "server", cfg.Server)
 
-	hsCtx, hsCancel := context.WithTimeout(ctx, 30*time.Second)
-	defer hsCancel()
-
-	if err := c.handshake(hsCtx); err != nil {
-		c.close()
-		return nil, err
-	}
-
 	return c, nil
 }
 
-func (c *client) close() {
-	c.tlsMu.Lock()
-	conn := c.tlsConn
-	c.tlsMu.Unlock()
-	if conn != nil {
-		conn.Close()
-	}
-}
+func (c *client) close() {}
 
 func (c *client) work(ctx context.Context) error {
 	for ctx.Err() == nil {
@@ -97,8 +90,12 @@ func (c *client) work(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("poll: %w", err)
 		}
-		task := resp.Msg
 
+		for _, w := range resp.Header().Values("X-Warning") {
+			slog.Warn("server warning", "msg", w)
+		}
+
+		task := resp.Msg
 		slog.Info("task received", "id", task.Id, "repo", task.RepoFullName)
 
 		execErr := executor.Run(task.CloneUrl, task.Branch)
@@ -115,113 +112,6 @@ func (c *client) work(ctx context.Context) error {
 			return fmt.Errorf("complete: %w", err)
 		}
 	}
+
 	return ctx.Err()
-}
-
-func (c *client) handshake(ctx context.Context) error {
-	stream := c.handle.Handshake(ctx)
-
-	// Step 1: send worker public key
-	pubKey, err := protocol.LoadPublicKey(c.cfg.PubKeyFile)
-	if err != nil {
-		return fmt.Errorf("load public key: %w", err)
-	}
-	if err := stream.Send(&pb.HandshakeIn{
-		Step: &pb.HandshakeIn_WorkerChallenge{
-			WorkerChallenge: &pb.WorkerChallenge{PublicKey: pubKey},
-		},
-	}); err != nil {
-		return fmt.Errorf("send challenge: %w", err)
-	}
-
-	// Step 2: receive server nonce
-	out, err := stream.Receive()
-	if err != nil {
-		return fmt.Errorf("recv server challenge: %w", err)
-	}
-	sc := out.GetServerChallenge()
-	if sc == nil {
-		return fmt.Errorf("expected ServerChallenge")
-	}
-
-	// Extract EKM if server requested channel binding
-	var ekm []byte
-	if sc.GetBinded() {
-		c.tlsMu.Lock()
-		conn := c.tlsConn
-		c.tlsMu.Unlock()
-		if conn == nil {
-			return fmt.Errorf("channel binding requested but TLS connection not available")
-		}
-		state := conn.ConnectionState()
-		ekm, err = state.ExportKeyingMaterial(protocol.EKMLabel, nil, protocol.EKMLength)
-		if err != nil {
-			return fmt.Errorf("export keying material: %w", err)
-		}
-	}
-
-	// Step 3: sign nonce (+ optional EKM) inside secret.Do
-	var signature []byte
-	var signErr error
-	secret.Do(func() {
-		key, err := protocol.LoadPrivateKey(c.cfg.KeyFile)
-		if err != nil {
-			signErr = fmt.Errorf("load key: %w", err)
-			return
-		}
-		hs := protocol.NewClientHandshake(key)
-		signature, signErr = hs.Sign(sc.GetNonce(), ekm)
-	})
-	if signErr != nil {
-		return signErr
-	}
-
-	name := c.cfg.Name
-	if name == "" {
-		name, _ = os.Hostname()
-	}
-	if err := stream.Send(&pb.HandshakeIn{
-		Step: &pb.HandshakeIn_WorkerProof{
-			WorkerProof: &pb.WorkerProof{
-				Signature:  signature,
-				Name:       name,
-				Version:    protocol.VersionProto(),
-				Os:         protocol.DetectOs(),
-				Arch:       protocol.DetectArch(),
-				Runtime:    workerRuntime,
-				WorkerTime: timestamppb.Now(),
-			},
-		},
-	}); err != nil {
-		return fmt.Errorf("send proof: %w", err)
-	}
-
-	// Step 4: receive result
-	out, err = stream.Receive()
-	if err != nil {
-		return fmt.Errorf("recv result: %w", err)
-	}
-	sr := out.GetServerResult()
-	if sr == nil {
-		return fmt.Errorf("expected ServerResult")
-	}
-	if sr.Error != nil {
-		return fmt.Errorf("%w: %s", protocol.ErrServerRejected, *sr.Error)
-	}
-
-	for _, w := range sr.GetWarnings() {
-		slog.Warn("server warning", "msg", w)
-	}
-
-	if err := stream.CloseRequest(); err != nil {
-		return fmt.Errorf("close stream: %w", err)
-	}
-	if err := stream.CloseResponse(); err != nil {
-		return fmt.Errorf("close stream: %w", err)
-	}
-
-	v := sr.GetServerVersion()
-	slog.Info("handshake ok", "server_version", fmt.Sprintf("%d.%d.%d", v.GetMajor(), v.GetMinor(), v.GetPatch()))
-
-	return nil
 }

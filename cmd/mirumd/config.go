@@ -10,15 +10,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type tlsConfig struct {
+	Cert string `yaml:"cert"`
+	Key  string `yaml:"key"`
+}
+
 type config struct {
-	WwwAddr     string `yaml:"www_addr"`
+	WebAddr     string `yaml:"web_addr"`
 	GrpcAddr    string `yaml:"grpc_addr"`
 	AdminSocket string `yaml:"admin_socket"`
 	DatabaseUri string `yaml:"database_uri"`
 	Pepper      string `yaml:"pepper"`
 
-	TLSCert string `yaml:"tls_cert"`
-	TLSKey  string `yaml:"tls_key"`
+	GrpcTls tlsConfig  `yaml:"grpc_tls"`
+	WebTls  *tlsConfig `yaml:"web_tls"` // optional
 
 	GitHubToken   string `yaml:"token"`
 	WebhookSecret string `yaml:"webhook_secret"`
@@ -27,7 +32,7 @@ type config struct {
 func getConfig(filename string) (*config, error) {
 	cfg := &config{
 		GrpcAddr:    ":2026",
-		WwwAddr:     ":3000",
+		WebAddr:     ":3000",
 		AdminSocket: "/run/mirumd/admin.sock",
 	}
 
@@ -48,6 +53,9 @@ func getConfig(filename string) (*config, error) {
 	}
 	if cfg.Pepper == "" {
 		return nil, fmt.Errorf("error: pepper is required")
+	}
+	if cfg.GrpcTls.Cert == "" || cfg.GrpcTls.Key == "" {
+		return nil, fmt.Errorf("error: grpc_tls.cert and grpc_tls.key are required")
 	}
 
 	return cfg, nil

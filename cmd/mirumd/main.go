@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
@@ -18,12 +17,11 @@ import (
 	"strconv"
 	"time"
 
-	"dimidiumlabs/mirum/internal/database"
-	"dimidiumlabs/mirum/internal/forges"
-
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
+	"dimidiumlabs/mirum/internal/database"
+	"dimidiumlabs/mirum/internal/forges"
 	"dimidiumlabs/mirum/internal/protocol/pb"
 	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
 	"dimidiumlabs/mirum/internal/supervisor"
@@ -273,14 +271,17 @@ func daemon(configFile, socketFlag string) {
 
 	slog.Info("config loaded", "configfile", configFile)
 
-	db, err := database.Open(context.Background(), cfg.DatabaseUri)
+	sup := supervisor.Detect()
+	ctx := sup.WaitForStop(context.Background())
+
+	db, err := database.Open(ctx, cfg.DatabaseUri)
 	if err != nil {
 		slog.Error("couldn't open database: %w", "err", err)
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	if err := db.Migrate(context.Background()); err != nil {
+	if err := db.Migrate(ctx); err != nil {
 		slog.Error("migration failed: %w", "err", err)
 		os.Exit(1)
 	}
@@ -288,33 +289,17 @@ func daemon(configFile, socketFlag string) {
 	slog.Info("database ready")
 
 	srv := &server{
-		cfg:   cfg,
 		db:    db,
+		cfg:   cfg,
 		forge: &forges.GitHub{Secret: cfg.WebhookSecret, Token: cfg.GitHubToken},
 		queue: make(chan *pb.Task, 100),
 	}
 
-	sup := supervisor.Detect()
-	ctx := sup.WaitForStop(context.Background())
+	go srv.PurgeSessions(ctx)
 
-	var tlsCfg *tls.Config
-	if cfg.TLSCert != "" && cfg.TLSKey != "" {
-		cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
-		if err != nil {
-			slog.Error("failed to load TLS certificate", "err", err)
-			os.Exit(1)
-		}
-		tlsCfg = &tls.Config{
-			Certificates: []tls.Certificate{cert},
-			MinVersion:   tls.VersionTLS13, // required for reliable EKM (channel binding)
-			NextProtos:   []string{"h2"},   // required for gRPC over TLS (ALPN)
-		}
-		slog.Info("TLS enabled", "cert", cfg.TLSCert)
-	}
-
-	wwwSrv := NewWwwServer(ctx, srv)
-	grpcSrv := NewGrpcServer(ctx, srv, tlsCfg)
-	adminSrv := NewAdminServer(srv)
+	webSrv := NewWebServer(ctx, srv)
+	grpcSrv := NewGrpcServer(ctx, srv)
+	adminSrv := NewAdminServer(ctx, srv)
 
 	grpcLn, webLn, adminLn, err := listeners(cfg)
 	if err != nil {
@@ -322,21 +307,22 @@ func daemon(configFile, socketFlag string) {
 		os.Exit(1)
 	}
 
-	if tlsCfg != nil {
-		grpcLn = tls.NewListener(grpcLn, tlsCfg)
-		webLn = tls.NewListener(webLn, tlsCfg)
-	}
-
 	slog.Info("listening", "grpc", grpcLn.Addr(), "web", webLn.Addr(), "admin", cfg.AdminSocket)
 
 	go func() {
-		if err := wwwSrv.Serve(webLn); err != nil && err != http.ErrServerClosed {
+		var err error
+		if webSrv.TLSConfig != nil {
+			err = webSrv.ServeTLS(webLn, "", "")
+		} else {
+			err = webSrv.Serve(webLn)
+		}
+		if err != nil && err != http.ErrServerClosed {
 			slog.Error("web server failed", "err", err)
 			os.Exit(1)
 		}
 	}()
 	go func() {
-		if err := grpcSrv.Serve(grpcLn); err != nil && err != http.ErrServerClosed {
+		if err := grpcSrv.ServeTLS(grpcLn, "", ""); err != nil && err != http.ErrServerClosed {
 			slog.Error("grpc server failed", "err", err)
 			os.Exit(1)
 		}
@@ -347,8 +333,6 @@ func daemon(configFile, socketFlag string) {
 			os.Exit(1)
 		}
 	}()
-
-	go srv.PurgeSessions(ctx)
 
 	sup.Ready()
 	go sup.StartWatchdog(ctx)
@@ -365,9 +349,15 @@ func daemon(configFile, socketFlag string) {
 
 	srv.Close()
 
-	wwwSrv.Shutdown(context.Background())
-	grpcSrv.Shutdown(context.Background())
-	adminSrv.Shutdown(context.Background())
+	if err := webSrv.Shutdown(context.Background()); err != nil {
+		slog.Error("web server shutdown", "err", err)
+	}
+	if err := grpcSrv.Shutdown(context.Background()); err != nil {
+		slog.Error("grpc server shutdown", "err", err)
+	}
+	if err := adminSrv.Shutdown(context.Background()); err != nil {
+		slog.Error("admin server shutdown", "err", err)
+	}
 }
 
 // listeners returns gRPC, web, and admin listeners.
@@ -392,7 +382,7 @@ func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 
 	if lns := named["web"]; len(lns) > 0 {
 		webLn = lns[0]
-	} else if webLn, err = net.Listen("tcp", cfg.WwwAddr); err != nil {
+	} else if webLn, err = net.Listen("tcp", cfg.WebAddr); err != nil {
 		return nil, nil, nil, err
 	}
 	defer func() {
@@ -425,7 +415,7 @@ func listeners(cfg *config) (grpcLn, webLn, adminLn net.Listener, err error) {
 		return nil, nil, nil, fmt.Errorf("chown admin socket: %w", err)
 	}
 
-	if err = os.Chmod(cfg.AdminSocket, 0660); err != nil {
+	if err = os.Chmod(cfg.AdminSocket, 0o660); err != nil {
 		return nil, nil, nil, fmt.Errorf("chmod admin socket: %w", err)
 	}
 

@@ -53,7 +53,7 @@ tasks:
       - cp {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumw
 
   dev:
-    desc: Generate dev TLS cert and worker keys
+    desc: Generate dev TLS cert and worker key
     cmds:
       - mkdir -p dev
       - >-
@@ -65,9 +65,6 @@ tasks:
       - >-
         test -f dev/worker.key ||
         openssl genpkey -algorithm ed25519 -out dev/worker.key
-      - >-
-        test -f dev/worker.pub ||
-        openssl pkey -in dev/worker.key -pubout -out dev/worker.pub
 
   package:
     desc: Build deb/rpm packages for all architectures

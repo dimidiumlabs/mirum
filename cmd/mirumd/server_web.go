@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
 	"embed"
 	"encoding/base64"
 	"errors"
@@ -27,56 +28,7 @@ var (
 	loginTmpl = template.Must(template.ParseFS(templateFS, "templates/layout.html", "templates/login.html"))
 )
 
-// csrfToken returns the current CSRF token, setting a cookie if absent.
-func csrfToken(w http.ResponseWriter, r *http.Request) string {
-	if c, err := r.Cookie("csrf"); err == nil && c.Value != "" {
-		return c.Value
-	}
-	b := make([]byte, 32)
-	rand.Read(b)
-	token := base64.RawURLEncoding.EncodeToString(b)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "csrf",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-	})
-	return token
-}
-
-// csrfOK checks that the form field matches the cookie (double-submit).
-func csrfOK(r *http.Request) bool {
-	cookie, err := r.Cookie("csrf")
-	if err != nil || cookie.Value == "" {
-		return false
-	}
-	field := r.FormValue("csrf")
-	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(field)) == 1
-}
-
-func clearCookie(w http.ResponseWriter, name string) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     name,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		MaxAge:   -1,
-	})
-}
-
-func NewWwwServer(ctx context.Context, srv *server) *http.Server {
-	return &http.Server{
-		Handler: wwwRoutes(srv),
-		BaseContext: func(_ net.Listener) context.Context {
-			return ctx
-		},
-	}
-}
-
-func wwwRoutes(srv *server) http.Handler {
+func NewWebServer(ctx context.Context, srv *server) *http.Server {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
@@ -173,5 +125,62 @@ func wwwRoutes(srv *server) http.Handler {
 		http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 	})
 
-	return mux
+	var tls_config *tls.Config = nil
+	if srv.cfg.WebTls != nil {
+		tls_config = &tls.Config{
+			MinVersion: tls.VersionTLS13,
+			GetCertificate: func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				cert, err := tls.LoadX509KeyPair(srv.cfg.WebTls.Cert, srv.cfg.WebTls.Key)
+				return &cert, err
+			},
+		}
+	}
+
+	return &http.Server{
+		Handler:   mux,
+		TLSConfig: tls_config,
+		BaseContext: func(_ net.Listener) context.Context {
+			return ctx
+		},
+	}
+}
+
+// csrfToken returns the current CSRF token, setting a cookie if absent.
+func csrfToken(w http.ResponseWriter, r *http.Request) string {
+	if c, err := r.Cookie("csrf"); err == nil && c.Value != "" {
+		return c.Value
+	}
+	b := make([]byte, 32)
+	rand.Read(b)
+	token := base64.RawURLEncoding.EncodeToString(b)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "csrf",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	return token
+}
+
+// csrfOK checks that the form field matches the cookie (double-submit).
+func csrfOK(r *http.Request) bool {
+	cookie, err := r.Cookie("csrf")
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	field := r.FormValue("csrf")
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(field)) == 1
+}
+
+func clearCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		MaxAge:   -1,
+	})
 }
