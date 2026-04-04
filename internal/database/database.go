@@ -12,10 +12,11 @@ import (
 )
 
 var (
-	ErrOpen    = errors.New("database: failed to open")
-	ErrPing    = errors.New("database: failed to ping")
-	ErrAcquire = errors.New("database: failed to acquire connection")
-	ErrMigrate = errors.New("database: failed to create migrator")
+	ErrOpen                 = errors.New("database: failed to open")
+	ErrPing                 = errors.New("database: failed to ping")
+	ErrAcquire              = errors.New("database: failed to acquire connection")
+	ErrMigrate              = errors.New("database: failed to create migrator")
+	ErrFilterNotImplemented = errors.New("database: filter not implemented")
 )
 
 // DB wraps a pgx connection pool.
@@ -78,16 +79,6 @@ func (db *DB) Migrate(ctx context.Context) error {
 		`DROP TABLE sessions`,
 	)
 
-	migrator.AppendMigration("create_workers",
-		`CREATE TABLE workers (
-			id         UUID PRIMARY KEY DEFAULT uuidv7(),
-			public_key BYTEA NOT NULL UNIQUE,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-			revoked_at TIMESTAMPTZ
-		)`,
-		`DROP TABLE workers`,
-	)
-
 	migrator.AppendMigration("create_organizations",
 		`CREATE TABLE organizations (
 			id         UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -110,6 +101,17 @@ func (db *DB) Migrate(ctx context.Context) error {
 		);
 		CREATE INDEX org_members_user_id ON org_members (user_id)`,
 		`DROP TABLE org_members`,
+	)
+
+	migrator.AppendMigration("create_workers",
+		`CREATE TABLE workers (
+			id         UUID PRIMARY KEY DEFAULT uuidv7(),
+			org_id     UUID REFERENCES organizations(id),
+			public_key BYTEA NOT NULL UNIQUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			revoked_at TIMESTAMPTZ
+		)`,
+		`DROP TABLE workers`,
 	)
 
 	return migrator.Migrate(ctx)

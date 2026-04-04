@@ -5,157 +5,273 @@ syntax = "proto3";
 
 package mirum;
 
-option go_package = "dimidiumlabs/mirum/internal/protocol/pb";
-
+import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
+
+option go_package = "dimidiumlabs/mirum/internal/protocol/pb";
 
 service Admin {
   rpc UserCreate(UserCreateRequest) returns (UserCreateResponse);
+  rpc UserGet(UserGetRequest) returns (UserGetResponse);
+  rpc UserList(UserListRequest) returns (UserListResponse);
+  rpc UserUpdate(UserUpdateRequest) returns (UserUpdateResponse);
   rpc UserDelete(UserDeleteRequest) returns (UserDeleteResponse);
-  rpc UserSetPassword(UserSetPasswordRequest) returns (UserSetPasswordResponse);
 
-  rpc OrgList(OrgListRequest) returns (OrgListResponse);
   rpc OrgCreate(OrgCreateRequest) returns (OrgCreateResponse);
+  rpc OrgGet(OrgGetRequest) returns (OrgGetResponse);
+  rpc OrgList(OrgListRequest) returns (OrgListResponse);
+  rpc OrgUpdate(OrgUpdateRequest) returns (OrgUpdateResponse);
   rpc OrgDelete(OrgDeleteRequest) returns (OrgDeleteResponse);
-  rpc OrgRename(OrgRenameRequest) returns (OrgRenameResponse);
 
-  rpc OrgMemberList(OrgMemberListRequest) returns (OrgMemberListResponse);
   rpc OrgMemberAdd(OrgMemberAddRequest) returns (OrgMemberAddResponse);
+  rpc OrgMemberGet(OrgMemberGetRequest) returns (OrgMemberGetResponse);
+  rpc OrgMemberList(OrgMemberListRequest) returns (OrgMemberListResponse);
+  rpc OrgMemberUpdate(OrgMemberUpdateRequest) returns (OrgMemberUpdateResponse);
   rpc OrgMemberRemove(OrgMemberRemoveRequest) returns (OrgMemberRemoveResponse);
-  rpc OrgMemberSetRole(OrgMemberSetRoleRequest) returns (OrgMemberSetRoleResponse);
 
+  rpc WorkerCreate(WorkerCreateRequest) returns (WorkerCreateResponse);
+  rpc WorkerGet(WorkerGetRequest) returns (WorkerGetResponse);
   rpc WorkerList(WorkerListRequest) returns (WorkerListResponse);
-  rpc WorkerAdd(WorkerAddRequest) returns (WorkerAddResponse);
-  rpc WorkerRevoke(WorkerRevokeRequest) returns (WorkerRevokeResponse);
+  rpc WorkerDelete(WorkerDeleteRequest) returns (WorkerDeleteResponse);
+}
+
+// Common types
+
+enum Role {
+  ROLE_NONE = 0;
+  ROLE_OWNER = 1;
+  ROLE_ADMIN = 2;
+  ROLE_MEMBER = 3;
+}
+
+message UserRef {
+  oneof ref {
+    option (buf.validate.oneof).required = true;
+    bytes id = 1 [(buf.validate.field).bytes = {
+      min_len: 16
+      max_len: 16
+    }];
+    string email = 2 [(buf.validate.field).string.email = true];
+  }
+}
+
+message OrgRef {
+  oneof ref {
+    option (buf.validate.oneof).required = true;
+    bytes id = 1 [(buf.validate.field).bytes = {
+      min_len: 16
+      max_len: 16
+    }];
+    string slug = 2 [(buf.validate.field).string = {
+      min_len: 2
+      max_len: 64
+    }];
+  }
+}
+
+message PageRequest {
+  bytes cursor = 1;
+  int32 page_size = 2;
+}
+message PageResponse {
+  bytes next_cursor = 1;
+  int32 total_count = 2;
+}
+
+// User management
+
+message User {
+  bytes id = 1;
+  string email = 2;
+  google.protobuf.Timestamp created_at = 3;
 }
 
 message UserCreateRequest {
-  string email = 1;
-  string password = 2;
+  string email = 1 [(buf.validate.field).string.email = true];
+  string password = 2 [(buf.validate.field).string.min_len = 1];
 }
-
 message UserCreateResponse {
-  string id = 1;
+  bytes id = 1;
 }
 
-message UserSetPasswordRequest {
-  string email = 1;
-  string password = 2;
+message UserGetRequest {
+  UserRef user = 1 [(buf.validate.field).required = true];
+}
+message UserGetResponse {
+  User user = 1;
 }
 
-message UserSetPasswordResponse {}
+message UserListRequest {
+  optional PageRequest page = 1;
+  optional string filter = 2;
+}
+message UserListResponse {
+  PageResponse page = 1;
+  repeated User users = 2;
+}
+
+message UserUpdateRequest {
+  UserRef user = 1 [(buf.validate.field).required = true];
+  optional string email = 2 [(buf.validate.field).string.email = true];
+  optional string password = 3 [(buf.validate.field).string.min_len = 1];
+}
+message UserUpdateResponse {}
 
 message UserDeleteRequest {
-  string email = 1;
+  UserRef user = 1 [(buf.validate.field).required = true];
 }
-
 message UserDeleteResponse {}
 
 // Organization management
 
-message OrgCreateRequest {
-  string name = 1;
-  string slug = 2;
-  bool public = 3;
-  string owner_email = 4;
-}
-
-message OrgCreateResponse {
-  string id = 1;
-}
-
-message OrgDeleteRequest {
-  string slug = 1;
-}
-
-message OrgDeleteResponse {}
-
-message OrgRenameRequest {
-  string slug = 1;
-  string new_name = 2;
-  string new_slug = 3;
-}
-
-message OrgRenameResponse {}
-
-message OrgListRequest {
-  optional string user_email = 1;
-}
-
-message OrgListResponse {
-  repeated Org organizations = 1;
-}
-
 message Org {
-  string id = 1;
+  bytes id = 1;
   string name = 2;
   string slug = 3;
   bool public = 4;
   google.protobuf.Timestamp created_at = 5;
 }
 
+message OrgCreateRequest {
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  string slug = 2 [(buf.validate.field).string = {
+    min_len: 2
+    max_len: 64
+  }];
+  UserRef owner = 3 [(buf.validate.field).required = true];
+  bool public = 4;
+}
+message OrgCreateResponse {
+  bytes id = 1;
+}
+
+message OrgGetRequest {
+  OrgRef org = 1 [(buf.validate.field).required = true];
+}
+message OrgGetResponse {
+  Org org = 1;
+}
+
+message OrgListRequest {
+  optional PageRequest page = 1;
+  optional string filter = 2;
+}
+message OrgListResponse {
+  PageResponse page = 1;
+  repeated Org organizations = 2;
+}
+
+message OrgUpdateRequest {
+  OrgRef org = 1 [(buf.validate.field).required = true];
+  optional string name = 2 [(buf.validate.field).string.min_len = 1];
+  optional string slug = 3 [(buf.validate.field).string = {
+    min_len: 2
+    max_len: 64
+  }];
+  optional bool public = 4;
+}
+message OrgUpdateResponse {}
+
+message OrgDeleteRequest {
+  OrgRef org = 1 [(buf.validate.field).required = true];
+}
+message OrgDeleteResponse {}
+
 // Organization members
 
-message OrgMemberAddRequest {
-  string org_slug = 1;
-  string email = 2;
-  string role = 3;
-}
-
-message OrgMemberAddResponse {}
-
-message OrgMemberRemoveRequest {
-  string org_slug = 1;
-  string email = 2;
-}
-
-message OrgMemberRemoveResponse {}
-
-message OrgMemberSetRoleRequest {
-  string org_slug = 1;
-  string email = 2;
-  string role = 3;
-}
-
-message OrgMemberSetRoleResponse {}
-
-message OrgMemberListRequest {
-  string org_slug = 1;
-}
-
-message OrgMemberListResponse {
-  repeated OrgMemberInfo members = 1;
-}
-
 message OrgMemberInfo {
-  string email = 1;
-  string role = 2;
+  User user = 1;
+  Role role = 2;
   google.protobuf.Timestamp joined_at = 3;
 }
 
-message WorkerAddRequest {
-  bytes public_key = 1;
+message OrgMemberGetRequest {
+  OrgRef org = 1 [(buf.validate.field).required = true];
+  UserRef user = 2 [(buf.validate.field).required = true];
+}
+message OrgMemberGetResponse {
+  OrgMemberInfo member = 1;
 }
 
-message WorkerAddResponse {
-  string id = 1;
+message OrgMemberAddRequest {
+  OrgRef org = 1 [(buf.validate.field).required = true];
+  UserRef user = 2 [(buf.validate.field).required = true];
+  Role role = 3 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+}
+message OrgMemberAddResponse {}
+
+message OrgMemberListRequest {
+  optional PageRequest page = 1;
+  OrgRef org = 2 [(buf.validate.field).required = true];
+  optional string filter = 3;
+}
+message OrgMemberListResponse {
+  PageResponse page = 1;
+  repeated OrgMemberInfo members = 2;
 }
 
-message WorkerRevokeRequest {
-  string id = 1;
+message OrgMemberUpdateRequest {
+  OrgRef org = 1 [(buf.validate.field).required = true];
+  UserRef user = 2 [(buf.validate.field).required = true];
+  Role role = 3 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
 }
+message OrgMemberUpdateResponse {}
 
-message WorkerRevokeResponse {}
-
-message WorkerListRequest {}
-
-message WorkerListResponse {
-  repeated Worker workers = 1;
+message OrgMemberRemoveRequest {
+  OrgRef org = 1 [(buf.validate.field).required = true];
+  UserRef user = 2 [(buf.validate.field).required = true];
 }
+message OrgMemberRemoveResponse {}
+
+// Worker management
 
 message Worker {
-  string id = 1;
+  bytes id = 1;
   bytes public_key = 2;
-  google.protobuf.Timestamp created_at = 3;
+  optional bytes org_id = 3;
+  google.protobuf.Timestamp created_at = 4;
 }
 
+message WorkerCreateRequest {
+  bytes public_key = 1 [(buf.validate.field).bytes = {
+    min_len: 32
+    max_len: 32
+  }];
+  optional OrgRef org = 2;
+}
+message WorkerCreateResponse {
+  bytes id = 1;
+}
+
+message WorkerGetRequest {
+  bytes id = 1 [(buf.validate.field).bytes = {
+    min_len: 16
+    max_len: 16
+  }];
+}
+message WorkerGetResponse {
+  Worker worker = 1;
+}
+
+message WorkerListRequest {
+  optional PageRequest page = 1;
+  optional string filter = 2;
+}
+message WorkerListResponse {
+  PageResponse page = 1;
+  repeated Worker workers = 2;
+}
+
+message WorkerDeleteRequest {
+  bytes id = 1 [(buf.validate.field).bytes = {
+    min_len: 16
+    max_len: 16
+  }];
+}
+message WorkerDeleteResponse {}

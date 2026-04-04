@@ -22,6 +22,7 @@ import (
 	"dimidiumlabs/mirum/internal/forges"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 
 	"dimidiumlabs/mirum/internal/protocol/pb"
 	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
@@ -187,12 +188,10 @@ func main() {
 		Use:   "list",
 		Short: "List organizations",
 		Run: func(cmd *cobra.Command, args []string) {
-			email, _ := cmd.Flags().GetString("user")
-			orgList(socketPath, email)
+			orgList(socketPath)
 		},
 	}
 	orgCmd.AddCommand(orgListCmd)
-	orgListCmd.Flags().String("user", "", "filter by user email (optional)")
 
 	orgMemberAddCmd := &cobra.Command{
 		Use:   "add-member",
@@ -449,6 +448,35 @@ func adminClient(socketPath string) pbconnect.AdminClient {
 	)
 }
 
+func cliUserRef(email string) *pb.UserRef {
+	return &pb.UserRef{Ref: &pb.UserRef_Email{Email: email}}
+}
+
+func cliOrgRef(slug string) *pb.OrgRef {
+	return &pb.OrgRef{Ref: &pb.OrgRef_Slug{Slug: slug}}
+}
+
+func cliRoleToProto(role string) pb.Role {
+	switch role {
+	case "owner":
+		return pb.Role_ROLE_OWNER
+	case "admin":
+		return pb.Role_ROLE_ADMIN
+	case "member":
+		return pb.Role_ROLE_MEMBER
+	default:
+		return pb.Role_ROLE_NONE
+	}
+}
+
+func cliUUID(b []byte) string {
+	if len(b) == 16 {
+		u, _ := uuid.FromBytes(b)
+		return u.String()
+	}
+	return fmt.Sprintf("%x", b)
+}
+
 func userCreate(socketPath, email, password string) {
 	resp, err := adminClient(socketPath).UserCreate(context.Background(), connect.NewRequest(&pb.UserCreateRequest{
 		Email:    email,
@@ -458,13 +486,13 @@ func userCreate(socketPath, email, password string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println(resp.Msg.Id)
+	fmt.Println(cliUUID(resp.Msg.Id))
 }
 
 func userSetPassword(socketPath, email, password string) {
-	_, err := adminClient(socketPath).UserSetPassword(context.Background(), connect.NewRequest(&pb.UserSetPasswordRequest{
-		Email:    email,
-		Password: password,
+	_, err := adminClient(socketPath).UserUpdate(context.Background(), connect.NewRequest(&pb.UserUpdateRequest{
+		User:     cliUserRef(email),
+		Password: &password,
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -475,7 +503,7 @@ func userSetPassword(socketPath, email, password string) {
 
 func userDelete(socketPath, email string) {
 	_, err := adminClient(socketPath).UserDelete(context.Background(), connect.NewRequest(&pb.UserDeleteRequest{
-		Email: email,
+		User: cliUserRef(email),
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -500,19 +528,24 @@ func workerAdd(socketPath, pubkeyB64 string) {
 		fmt.Fprintln(os.Stderr, "not an ed25519 key")
 		os.Exit(1)
 	}
-	resp, err := adminClient(socketPath).WorkerAdd(context.Background(), connect.NewRequest(&pb.WorkerAddRequest{
+	resp, err := adminClient(socketPath).WorkerCreate(context.Background(), connect.NewRequest(&pb.WorkerCreateRequest{
 		PublicKey: edKey,
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println(resp.Msg.Id)
+	fmt.Println(cliUUID(resp.Msg.Id))
 }
 
 func workerRevoke(socketPath, id string) {
-	_, err := adminClient(socketPath).WorkerRevoke(context.Background(), connect.NewRequest(&pb.WorkerRevokeRequest{
-		Id: id,
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "invalid uuid:", err)
+		os.Exit(1)
+	}
+	_, err = adminClient(socketPath).WorkerDelete(context.Background(), connect.NewRequest(&pb.WorkerDeleteRequest{
+		Id: uid[:],
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -529,27 +562,27 @@ func workerList(socketPath string) {
 	}
 	for _, w := range resp.Msg.Workers {
 		created := w.CreatedAt.AsTime().Format(time.DateOnly)
-		fmt.Printf("%s\t%s\t%s\n", w.Id, base64.StdEncoding.EncodeToString(w.PublicKey), created)
+		fmt.Printf("%s\t%s\t%s\n", cliUUID(w.Id), base64.StdEncoding.EncodeToString(w.PublicKey), created)
 	}
 }
 
 func orgCreate(socketPath, name, slug string, public bool, ownerEmail string) {
 	resp, err := adminClient(socketPath).OrgCreate(context.Background(), connect.NewRequest(&pb.OrgCreateRequest{
-		Name:       name,
-		Slug:       slug,
-		Public:     public,
-		OwnerEmail: ownerEmail,
+		Name:   name,
+		Slug:   slug,
+		Public: public,
+		Owner:  cliUserRef(ownerEmail),
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println(resp.Msg.Id)
+	fmt.Println(cliUUID(resp.Msg.Id))
 }
 
 func orgDelete(socketPath, slug string) {
 	_, err := adminClient(socketPath).OrgDelete(context.Background(), connect.NewRequest(&pb.OrgDeleteRequest{
-		Slug: slug,
+		Org: cliOrgRef(slug),
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -559,10 +592,10 @@ func orgDelete(socketPath, slug string) {
 }
 
 func orgRename(socketPath, slug, newName, newSlug string) {
-	_, err := adminClient(socketPath).OrgRename(context.Background(), connect.NewRequest(&pb.OrgRenameRequest{
-		Slug:    slug,
-		NewName: newName,
-		NewSlug: newSlug,
+	_, err := adminClient(socketPath).OrgUpdate(context.Background(), connect.NewRequest(&pb.OrgUpdateRequest{
+		Org:  cliOrgRef(slug),
+		Name: &newName,
+		Slug: &newSlug,
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -571,12 +604,8 @@ func orgRename(socketPath, slug, newName, newSlug string) {
 	fmt.Println("ok")
 }
 
-func orgList(socketPath, email string) {
-	req := &pb.OrgListRequest{}
-	if email != "" {
-		req.UserEmail = &email
-	}
-	resp, err := adminClient(socketPath).OrgList(context.Background(), connect.NewRequest(req))
+func orgList(socketPath string) {
+	resp, err := adminClient(socketPath).OrgList(context.Background(), connect.NewRequest(&pb.OrgListRequest{}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -592,9 +621,9 @@ func orgList(socketPath, email string) {
 
 func orgMemberAdd(socketPath, orgSlug, email, role string) {
 	_, err := adminClient(socketPath).OrgMemberAdd(context.Background(), connect.NewRequest(&pb.OrgMemberAddRequest{
-		OrgSlug: orgSlug,
-		Email:   email,
-		Role:    role,
+		Org:  cliOrgRef(orgSlug),
+		User: cliUserRef(email),
+		Role: cliRoleToProto(role),
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -605,8 +634,8 @@ func orgMemberAdd(socketPath, orgSlug, email, role string) {
 
 func orgMemberRemove(socketPath, orgSlug, email string) {
 	_, err := adminClient(socketPath).OrgMemberRemove(context.Background(), connect.NewRequest(&pb.OrgMemberRemoveRequest{
-		OrgSlug: orgSlug,
-		Email:   email,
+		Org:  cliOrgRef(orgSlug),
+		User: cliUserRef(email),
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -616,10 +645,10 @@ func orgMemberRemove(socketPath, orgSlug, email string) {
 }
 
 func orgMemberSetRole(socketPath, orgSlug, email, role string) {
-	_, err := adminClient(socketPath).OrgMemberSetRole(context.Background(), connect.NewRequest(&pb.OrgMemberSetRoleRequest{
-		OrgSlug: orgSlug,
-		Email:   email,
-		Role:    role,
+	_, err := adminClient(socketPath).OrgMemberUpdate(context.Background(), connect.NewRequest(&pb.OrgMemberUpdateRequest{
+		Org:  cliOrgRef(orgSlug),
+		User: cliUserRef(email),
+		Role: cliRoleToProto(role),
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -630,13 +659,13 @@ func orgMemberSetRole(socketPath, orgSlug, email, role string) {
 
 func orgMemberList(socketPath, orgSlug string) {
 	resp, err := adminClient(socketPath).OrgMemberList(context.Background(), connect.NewRequest(&pb.OrgMemberListRequest{
-		OrgSlug: orgSlug,
+		Org: cliOrgRef(orgSlug),
 	}))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	for _, m := range resp.Msg.Members {
-		fmt.Printf("%s\t%s\t%s\n", m.Email, m.Role, m.JoinedAt.AsTime().Format(time.DateOnly))
+		fmt.Printf("%s\t%s\t%s\n", m.User.Email, m.Role, m.JoinedAt.AsTime().Format(time.DateOnly))
 	}
 }

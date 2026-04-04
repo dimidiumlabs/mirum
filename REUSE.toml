@@ -12,6 +12,7 @@ path = [
   "README.md",
   "pkg/logo.svg",
   "pkg/dl/*",
+  "proto/buf.*"
 ]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov <me@govorov.online>"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
