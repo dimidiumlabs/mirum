@@ -26,16 +26,21 @@ type Worker struct {
 }
 
 // GetWorker returns a worker by ID.
-func (db *DB) GetWorker(ctx context.Context, id uuid.UUID) (*Worker, error) {
+func (db *DB) GetWorker(ctx context.Context, actor uuid.UUID, id uuid.UUID) (*Worker, error) {
+	tx, err := db.beginAs(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
 	var w Worker
-	if err := db.Pool.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`SELECT id, public_key, org_id, created_at FROM workers WHERE id = $1 AND revoked_at IS NULL`,
 		id,
 	).Scan(&w.ID, &w.PublicKey, &w.OrgID, &w.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrWorkerNotFound
 		}
-
 		return nil, err
 	}
 
@@ -43,8 +48,8 @@ func (db *DB) GetWorker(ctx context.Context, id uuid.UUID) (*Worker, error) {
 }
 
 // CreateWorker registers a new worker with the given public key and optional org.
-func (db *DB) CreateWorker(ctx context.Context, publicKey []byte, org *OrgRef) (uuid.UUID, error) {
-	tx, err := db.Pool.Begin(ctx)
+func (db *DB) CreateWorker(ctx context.Context, actor uuid.UUID, publicKey []byte, org *OrgRef) (uuid.UUID, error) {
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -71,28 +76,33 @@ func (db *DB) CreateWorker(ctx context.Context, publicKey []byte, org *OrgRef) (
 }
 
 // DeleteWorker soft-deletes a worker by ID.
-func (db *DB) DeleteWorker(ctx context.Context, id uuid.UUID) error {
-	tag, err := db.Pool.Exec(ctx,
+func (db *DB) DeleteWorker(ctx context.Context, actor uuid.UUID, id uuid.UUID) error {
+	tx, err := db.beginAs(ctx, actor)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx,
 		`UPDATE workers SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL`, id,
 	)
 	if err != nil {
 		return err
 	}
-
 	if tag.RowsAffected() == 0 {
 		return ErrWorkerNotFound
 	}
 
-	return nil
+	return tx.Commit(ctx)
 }
 
 // ListWorkers returns a page of workers and the total count.
-func (db *DB) ListWorkers(ctx context.Context, cursor uuid.UUID, limit int, filter string) ([]Worker, int, error) {
+func (db *DB) ListWorkers(ctx context.Context, actor uuid.UUID, cursor uuid.UUID, limit int, filter string) ([]Worker, int, error) {
 	if filter != "" {
 		return nil, 0, ErrFilterNotImplemented
 	}
 
-	tx, err := db.Pool.Begin(ctx)
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -134,9 +144,15 @@ func (db *DB) ListWorkers(ctx context.Context, cursor uuid.UUID, limit int, filt
 }
 
 // LookupWorker finds an active worker by its ed25519 public key.
-func (db *DB) LookupWorker(ctx context.Context, publicKey []byte) (*Worker, error) {
+func (db *DB) LookupWorker(ctx context.Context, actor uuid.UUID, publicKey []byte) (*Worker, error) {
+	tx, err := db.beginAs(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
 	var w Worker
-	if err := db.Pool.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`SELECT id, public_key, org_id, created_at FROM workers WHERE public_key = $1 AND revoked_at IS NULL`,
 		publicKey,
 	).Scan(&w.ID, &w.PublicKey, &w.OrgID, &w.CreatedAt); err != nil {

@@ -25,6 +25,8 @@ type config struct {
 	GrpcTls tlsConfig  `yaml:"grpc_tls"`
 	WebTls  *tlsConfig `yaml:"web_tls"` // optional
 
+	TrustedProxies []string `yaml:"trusted_proxies"` // CIDR list, empty = trust RemoteAddr only
+
 	GitHubToken   string `yaml:"token"`
 	WebhookSecret string `yaml:"webhook_secret"`
 }

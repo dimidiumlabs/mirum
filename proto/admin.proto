@@ -44,6 +44,23 @@ enum Role {
   ROLE_MEMBER = 3;
 }
 
+enum Perm {
+  PERM_NONE = 0;
+
+  PERM_USER_READ = 1;
+  PERM_USER_WRITE = 2;
+  PERM_USER_DELETE = 3;
+
+  PERM_ORG_READ = 4;
+  PERM_ORG_WRITE = 5;
+  PERM_ORG_DELETE = 6;
+  PERM_ORG_MEMBER_READ = 7;
+  PERM_ORG_MEMBER_WRITE = 8;
+
+  PERM_WORKER_READ = 9;
+  PERM_WORKER_WRITE = 10;
+}
+
 message UserRef {
   oneof ref {
     option (buf.validate.oneof).required = true;

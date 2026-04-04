@@ -134,14 +134,20 @@ func hashPassword(password string, pepper []byte) (string, error) {
 
 // UserCreate hashes the password with argon2id and inserts a new user.
 // The pepper is a server-side secret not stored in the database.
-func (db *DB) UserCreate(ctx context.Context, email, password string, pepper []byte) (uuid.UUID, error) {
+func (db *DB) UserCreate(ctx context.Context, actor uuid.UUID, email, password string, pepper []byte) (uuid.UUID, error) {
 	hash, err := hashPassword(password, pepper)
 	if err != nil {
 		return uuid.Nil, err
 	}
 
+	tx, err := db.beginAs(ctx, actor)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
+
 	var id uuid.UUID
-	if err := db.Pool.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id`,
 		email, hash,
 	).Scan(&id); err != nil {
@@ -152,12 +158,18 @@ func (db *DB) UserCreate(ctx context.Context, email, password string, pepper []b
 		return uuid.Nil, err
 	}
 
-	return id, nil
+	return id, tx.Commit(ctx)
 }
 
 // GetUser returns a user by ref (ID or email).
-func (db *DB) GetUser(ctx context.Context, ref UserRef) (*User, error) {
+func (db *DB) GetUser(ctx context.Context, actor uuid.UUID, ref UserRef) (*User, error) {
 	col, val := ref.where()
+
+	tx, err := db.beginAs(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
 
 	q := sb.PostgreSQL.NewSelectBuilder()
 	sql, args := q.Select("id", "email", "created_at").
@@ -166,11 +178,10 @@ func (db *DB) GetUser(ctx context.Context, ref UserRef) (*User, error) {
 		Build()
 
 	var u User
-	if err := db.Pool.QueryRow(ctx, sql, args...).Scan(&u.ID, &u.Email, &u.CreatedAt); err != nil {
+	if err := tx.QueryRow(ctx, sql, args...).Scan(&u.ID, &u.Email, &u.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}
-
 		return nil, err
 	}
 
@@ -178,12 +189,12 @@ func (db *DB) GetUser(ctx context.Context, ref UserRef) (*User, error) {
 }
 
 // ListUsers returns a page of users and the total count.
-func (db *DB) ListUsers(ctx context.Context, cursor uuid.UUID, limit int, filter string) ([]User, int, error) {
+func (db *DB) ListUsers(ctx context.Context, actor uuid.UUID, cursor uuid.UUID, limit int, filter string) ([]User, int, error) {
 	if filter != "" {
 		return nil, 0, ErrFilterNotImplemented
 	}
 
-	tx, err := db.Pool.Begin(ctx)
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -269,12 +280,12 @@ func resolveUser(ctx context.Context, tx pgx.Tx, ref UserRef) (uuid.UUID, error)
 
 // UserUpdate updates a user's email and/or password.
 // Invalidates all sessions when password changes.
-func (db *DB) UserUpdate(ctx context.Context, ref UserRef, email *string, password *string, pepper []byte) error {
+func (db *DB) UserUpdate(ctx context.Context, actor uuid.UUID, ref UserRef, email *string, password *string, pepper []byte) error {
 	if email == nil && password == nil {
 		return nil
 	}
 
-	tx, err := db.Pool.Begin(ctx)
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return err
 	}
@@ -323,8 +334,8 @@ func (db *DB) UserUpdate(ctx context.Context, ref UserRef, email *string, passwo
 
 // UserDelete soft-deletes a user.
 // Fails if the user is the sole owner of any organization.
-func (db *DB) UserDelete(ctx context.Context, ref UserRef) error {
-	tx, err := db.Pool.Begin(ctx)
+func (db *DB) UserDelete(ctx context.Context, actor uuid.UUID, ref UserRef) error {
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return err
 	}
@@ -357,11 +368,17 @@ func (db *DB) UserDelete(ctx context.Context, ref UserRef) error {
 }
 
 // UserVerifyPassword checks credentials and returns the user ID.
-func (db *DB) UserVerifyPassword(ctx context.Context, email, password string, pepper []byte) (uuid.UUID, error) {
+func (db *DB) UserVerifyPassword(ctx context.Context, actor uuid.UUID, email, password string, pepper []byte) (uuid.UUID, error) {
+	tx, err := db.beginAs(ctx, actor)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
+
 	var id uuid.UUID
 	var hash string
 
-	if err := db.Pool.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`SELECT id, password FROM users WHERE email = $1 AND deleted_at IS NULL`,
 		email,
 	).Scan(&id, &hash); err != nil {
@@ -376,12 +393,18 @@ func (db *DB) UserVerifyPassword(ctx context.Context, email, password string, pe
 }
 
 // UserGetSession returns session info for a valid, non-expired session.
-func (db *DB) UserGetSession(ctx context.Context, token string) (*Session, error) {
+func (db *DB) UserGetSession(ctx context.Context, actor uuid.UUID, token string) (*Session, error) {
+	tx, err := db.beginAs(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
 	var s Session
 	h := hashToken(token)
 	var expiresAt time.Time
 
-	if err := db.Pool.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`SELECT s.user_id, u.email, s.expires_at
 		 FROM sessions s JOIN users u ON u.id = s.user_id
 		 WHERE s.token = $1 AND s.expires_at > now() AND u.deleted_at IS NULL`,
@@ -391,7 +414,7 @@ func (db *DB) UserGetSession(ctx context.Context, token string) (*Session, error
 	}
 
 	if time.Until(expiresAt) < SessionTTL/2 {
-		if _, err := db.Pool.Exec(ctx,
+		if _, err := tx.Exec(ctx,
 			`UPDATE sessions SET expires_at = now() + $2 WHERE token = $1`,
 			h, SessionTTL,
 		); err != nil {
@@ -399,35 +422,57 @@ func (db *DB) UserGetSession(ctx context.Context, token string) (*Session, error
 		}
 	}
 
-	return &s, nil
+	return &s, tx.Commit(ctx)
 }
 
 // UserCreateSession generates a random token, stores its hash, and returns the token.
-func (db *DB) UserCreateSession(ctx context.Context, userID uuid.UUID) (string, error) {
+func (db *DB) UserCreateSession(ctx context.Context, actor uuid.UUID, userID uuid.UUID) (string, error) {
+	tx, err := db.beginAs(ctx, actor)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
 	token := base64.RawURLEncoding.EncodeToString(buf)
 
-	if _, err := db.Pool.Exec(ctx,
+	if _, err := tx.Exec(ctx,
 		`INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, now() + $3)`,
 		hashToken(token), userID, SessionTTL,
 	); err != nil {
 		return "", err
 	}
 
-	return token, nil
+	return token, tx.Commit(ctx)
 }
 
 // UserDeleteSession removes a session (logout).
-func (db *DB) UserDeleteSession(ctx context.Context, token string) error {
-	_, err := db.Pool.Exec(ctx, `DELETE FROM sessions WHERE token = $1`, hashToken(token))
-	return err
+func (db *DB) UserDeleteSession(ctx context.Context, actor uuid.UUID, token string) error {
+	tx, err := db.beginAs(ctx, actor)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE token = $1`, hashToken(token)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-// PurgeExpiredSessions deletes all expired sessions.
+// PurgeExpiredSessions deletes all expired sessions. Runs as root.
 func (db *DB) PurgeExpiredSessions(ctx context.Context) error {
-	_, err := db.Pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
-	return err
+	tx, err := db.beginAs(ctx, uuid.Nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

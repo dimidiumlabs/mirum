@@ -17,6 +17,7 @@ import (
 
 	"connectrpc.com/connect"
 	"connectrpc.com/validate"
+	"github.com/google/uuid"
 
 	"dimidiumlabs/mirum/internal/protocol"
 	"dimidiumlabs/mirum/internal/protocol/pb"
@@ -61,7 +62,7 @@ func NewGrpcServer(ctx context.Context, srv *server) *http.Server {
 					return errors.New("ed25519 certificate required")
 				}
 
-				if _, err := srv.db.LookupWorker(context.Background(), pubKey); err != nil {
+				if _, err := srv.db.LookupWorker(context.Background(), uuid.Nil, pubKey); err != nil {
 					return fmt.Errorf("unknown worker: %w", err)
 				}
 

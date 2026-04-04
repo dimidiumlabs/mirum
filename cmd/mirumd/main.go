@@ -297,9 +297,26 @@ func daemon(configFile, socketFlag string) {
 
 	go srv.PurgeSessions(ctx)
 
-	webSrv := NewWebServer(ctx, srv)
+	adminPath, adminHandler := NewAdminHandler(srv)
+
+	webSrv := NewWebServer(ctx, srv, adminPath, adminHandler)
 	grpcSrv := NewGrpcServer(ctx, srv)
-	adminSrv := NewAdminServer(ctx, srv)
+
+	adminMux := http.NewServeMux()
+	adminMux.Handle(adminPath, adminHandler)
+	adminSrv := &http.Server{
+		Handler: adminMux,
+		ConnContext: func(ctx context.Context, _ net.Conn) context.Context {
+			return context.WithValue(ctx, callerKey{}, &callerInfo{
+				UserID:    uuid.Nil,
+				Email:     "root@localhost",
+				Superuser: true,
+			})
+		},
+		BaseContext: func(_ net.Listener) context.Context {
+			return ctx
+		},
+	}
 
 	grpcLn, webLn, adminLn, err := listeners(cfg)
 	if err != nil {

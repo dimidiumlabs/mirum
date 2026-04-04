@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 
 	"connectrpc.com/connect"
@@ -20,27 +19,32 @@ import (
 	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
 )
 
-func NewAdminServer(ctx context.Context, srv *server) *http.Server {
+// NewAdminHandler creates the ConnectRPC handler with validation and auth.
+func NewAdminHandler(srv *server) (string, http.Handler) {
 	as := &adminService{srv: srv}
+	auth := &ApiAuthInterceptor{srv: srv}
 
-	path, handler := pbconnect.NewAdminHandler(as,
-		connect.WithInterceptors(validate.NewInterceptor()),
+	return pbconnect.NewAdminHandler(as,
+		connect.WithInterceptors(validate.NewInterceptor(), auth),
 	)
-
-	mux := http.NewServeMux()
-	mux.Handle(path, handler)
-
-	return &http.Server{
-		Handler: mux,
-		BaseContext: func(_ net.Listener) context.Context {
-			return ctx
-		},
-	}
 }
 
 type adminService struct {
 	pbconnect.UnimplementedAdminHandler
 	srv *server
+}
+
+// anonActorID is a UUID that is not a real user — used for unauthenticated
+// public requests. RLS will show only public data for this actor.
+var anonActorID = uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff")
+
+// actorID returns the authenticated user's UUID from context,
+// or anonActorID for unauthenticated public requests.
+func actorID(ctx context.Context) uuid.UUID {
+	if c := CallerFromContext(ctx); c != nil {
+		return c.UserID
+	}
+	return anonActorID
 }
 
 // --- Error mapping ---
@@ -175,7 +179,7 @@ func workerToProto(w database.Worker) *pb.Worker {
 // --- User handlers ---
 
 func (a *adminService) UserCreate(ctx context.Context, req *connect.Request[pb.UserCreateRequest]) (*connect.Response[pb.UserCreateResponse], error) {
-	id, err := a.srv.db.UserCreate(ctx, req.Msg.Email, req.Msg.Password, []byte(a.srv.cfg.Pepper))
+	id, err := a.srv.db.UserCreate(ctx, actorID(ctx), req.Msg.Email, req.Msg.Password, []byte(a.srv.cfg.Pepper))
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -183,7 +187,7 @@ func (a *adminService) UserCreate(ctx context.Context, req *connect.Request[pb.U
 }
 
 func (a *adminService) UserGet(ctx context.Context, req *connect.Request[pb.UserGetRequest]) (*connect.Response[pb.UserGetResponse], error) {
-	u, err := a.srv.db.GetUser(ctx, userRef(req.Msg.User))
+	u, err := a.srv.db.GetUser(ctx, actorID(ctx), userRef(req.Msg.User))
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -197,7 +201,7 @@ func (a *adminService) UserList(ctx context.Context, req *connect.Request[pb.Use
 		filter = *req.Msg.Filter
 	}
 
-	users, total, err := a.srv.db.ListUsers(ctx, cursor, limit, filter)
+	users, total, err := a.srv.db.ListUsers(ctx, actorID(ctx), cursor, limit, filter)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -219,14 +223,14 @@ func (a *adminService) UserList(ctx context.Context, req *connect.Request[pb.Use
 }
 
 func (a *adminService) UserUpdate(ctx context.Context, req *connect.Request[pb.UserUpdateRequest]) (*connect.Response[pb.UserUpdateResponse], error) {
-	if err := a.srv.db.UserUpdate(ctx, userRef(req.Msg.User), req.Msg.Email, req.Msg.Password, []byte(a.srv.cfg.Pepper)); err != nil {
+	if err := a.srv.db.UserUpdate(ctx, actorID(ctx), userRef(req.Msg.User), req.Msg.Email, req.Msg.Password, []byte(a.srv.cfg.Pepper)); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.UserUpdateResponse{}), nil
 }
 
 func (a *adminService) UserDelete(ctx context.Context, req *connect.Request[pb.UserDeleteRequest]) (*connect.Response[pb.UserDeleteResponse], error) {
-	if err := a.srv.db.UserDelete(ctx, userRef(req.Msg.User)); err != nil {
+	if err := a.srv.db.UserDelete(ctx, actorID(ctx), userRef(req.Msg.User)); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.UserDeleteResponse{}), nil
@@ -239,7 +243,7 @@ func (a *adminService) OrgCreate(ctx context.Context, req *connect.Request[pb.Or
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	id, err := a.srv.db.CreateOrganization(ctx, req.Msg.Name, slug, req.Msg.Public, userRef(req.Msg.Owner))
+	id, err := a.srv.db.CreateOrganization(ctx, actorID(ctx), req.Msg.Name, slug, req.Msg.Public, userRef(req.Msg.Owner))
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -247,7 +251,7 @@ func (a *adminService) OrgCreate(ctx context.Context, req *connect.Request[pb.Or
 }
 
 func (a *adminService) OrgGet(ctx context.Context, req *connect.Request[pb.OrgGetRequest]) (*connect.Response[pb.OrgGetResponse], error) {
-	o, err := a.srv.db.GetOrg(ctx, orgRef(req.Msg.Org))
+	o, err := a.srv.db.GetOrg(ctx, actorID(ctx), orgRef(req.Msg.Org))
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -261,7 +265,7 @@ func (a *adminService) OrgList(ctx context.Context, req *connect.Request[pb.OrgL
 		filter = *req.Msg.Filter
 	}
 
-	orgs, total, err := a.srv.db.ListOrganizations(ctx, cursor, limit, filter)
+	orgs, total, err := a.srv.db.ListOrganizations(ctx, actorID(ctx), cursor, limit, filter)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -291,14 +295,14 @@ func (a *adminService) OrgUpdate(ctx context.Context, req *connect.Request[pb.Or
 		}
 		slug = &s
 	}
-	if err := a.srv.db.UpdateOrganization(ctx, orgRef(req.Msg.Org), req.Msg.Name, slug, req.Msg.Public); err != nil {
+	if err := a.srv.db.UpdateOrganization(ctx, actorID(ctx), orgRef(req.Msg.Org), req.Msg.Name, slug, req.Msg.Public); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.OrgUpdateResponse{}), nil
 }
 
 func (a *adminService) OrgDelete(ctx context.Context, req *connect.Request[pb.OrgDeleteRequest]) (*connect.Response[pb.OrgDeleteResponse], error) {
-	if err := a.srv.db.DeleteOrganization(ctx, orgRef(req.Msg.Org)); err != nil {
+	if err := a.srv.db.DeleteOrganization(ctx, actorID(ctx), orgRef(req.Msg.Org)); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.OrgDeleteResponse{}), nil
@@ -311,14 +315,14 @@ func (a *adminService) OrgMemberAdd(ctx context.Context, req *connect.Request[pb
 	if !ok {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid role"))
 	}
-	if err := a.srv.db.AddOrgMember(ctx, orgRef(req.Msg.Org), userRef(req.Msg.User), role); err != nil {
+	if err := a.srv.db.AddOrgMember(ctx, actorID(ctx), orgRef(req.Msg.Org), userRef(req.Msg.User), role); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.OrgMemberAddResponse{}), nil
 }
 
 func (a *adminService) OrgMemberGet(ctx context.Context, req *connect.Request[pb.OrgMemberGetRequest]) (*connect.Response[pb.OrgMemberGetResponse], error) {
-	m, err := a.srv.db.GetOrgMember(ctx, orgRef(req.Msg.Org), userRef(req.Msg.User))
+	m, err := a.srv.db.GetOrgMember(ctx, actorID(ctx), orgRef(req.Msg.Org), userRef(req.Msg.User))
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -332,7 +336,7 @@ func (a *adminService) OrgMemberList(ctx context.Context, req *connect.Request[p
 		filter = *req.Msg.Filter
 	}
 
-	members, total, err := a.srv.db.ListOrgMembers(ctx, orgRef(req.Msg.Org), cursor, limit, filter)
+	members, total, err := a.srv.db.ListOrgMembers(ctx, actorID(ctx), orgRef(req.Msg.Org), cursor, limit, filter)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -358,14 +362,14 @@ func (a *adminService) OrgMemberUpdate(ctx context.Context, req *connect.Request
 	if !ok {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid role"))
 	}
-	if err := a.srv.db.UpdateOrgMemberRole(ctx, orgRef(req.Msg.Org), userRef(req.Msg.User), role); err != nil {
+	if err := a.srv.db.UpdateOrgMemberRole(ctx, actorID(ctx), orgRef(req.Msg.Org), userRef(req.Msg.User), role); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.OrgMemberUpdateResponse{}), nil
 }
 
 func (a *adminService) OrgMemberRemove(ctx context.Context, req *connect.Request[pb.OrgMemberRemoveRequest]) (*connect.Response[pb.OrgMemberRemoveResponse], error) {
-	if err := a.srv.db.RemoveOrgMember(ctx, orgRef(req.Msg.Org), userRef(req.Msg.User)); err != nil {
+	if err := a.srv.db.RemoveOrgMember(ctx, actorID(ctx), orgRef(req.Msg.Org), userRef(req.Msg.User)); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.OrgMemberRemoveResponse{}), nil
@@ -379,7 +383,7 @@ func (a *adminService) WorkerCreate(ctx context.Context, req *connect.Request[pb
 		r := orgRef(req.Msg.Org)
 		org = &r
 	}
-	id, err := a.srv.db.CreateWorker(ctx, req.Msg.PublicKey, org)
+	id, err := a.srv.db.CreateWorker(ctx, actorID(ctx), req.Msg.PublicKey, org)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -387,7 +391,7 @@ func (a *adminService) WorkerCreate(ctx context.Context, req *connect.Request[pb
 }
 
 func (a *adminService) WorkerGet(ctx context.Context, req *connect.Request[pb.WorkerGetRequest]) (*connect.Response[pb.WorkerGetResponse], error) {
-	w, err := a.srv.db.GetWorker(ctx, uuid.UUID(req.Msg.Id))
+	w, err := a.srv.db.GetWorker(ctx, actorID(ctx), uuid.UUID(req.Msg.Id))
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -401,7 +405,7 @@ func (a *adminService) WorkerList(ctx context.Context, req *connect.Request[pb.W
 		filter = *req.Msg.Filter
 	}
 
-	workers, total, err := a.srv.db.ListWorkers(ctx, cursor, limit, filter)
+	workers, total, err := a.srv.db.ListWorkers(ctx, actorID(ctx), cursor, limit, filter)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -423,7 +427,7 @@ func (a *adminService) WorkerList(ctx context.Context, req *connect.Request[pb.W
 }
 
 func (a *adminService) WorkerDelete(ctx context.Context, req *connect.Request[pb.WorkerDeleteRequest]) (*connect.Response[pb.WorkerDeleteResponse], error) {
-	if err := a.srv.db.DeleteWorker(ctx, uuid.UUID(req.Msg.Id)); err != nil {
+	if err := a.srv.db.DeleteWorker(ctx, actorID(ctx), uuid.UUID(req.Msg.Id)); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.WorkerDeleteResponse{}), nil

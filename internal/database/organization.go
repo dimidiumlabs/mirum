@@ -78,7 +78,13 @@ func resolveOrg(ctx context.Context, tx pgx.Tx, ref OrgRef) (uuid.UUID, error) {
 }
 
 // GetOrg returns an org by ref (ID or slug).
-func (db *DB) GetOrg(ctx context.Context, ref OrgRef) (*Organization, error) {
+func (db *DB) GetOrg(ctx context.Context, actor uuid.UUID, ref OrgRef) (*Organization, error) {
+	tx, err := db.beginAs(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
 	col, val := ref.where()
 	q := sb.PostgreSQL.NewSelectBuilder()
 
@@ -88,11 +94,10 @@ func (db *DB) GetOrg(ctx context.Context, ref OrgRef) (*Organization, error) {
 		Build()
 
 	var o Organization
-	if err := db.Pool.QueryRow(ctx, sql, args...).Scan(&o.ID, &o.Name, &o.Slug, &o.Public, &o.CreatedAt); err != nil {
+	if err := tx.QueryRow(ctx, sql, args...).Scan(&o.ID, &o.Name, &o.Slug, &o.Public, &o.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrOrgNotFound
 		}
-
 		return nil, err
 	}
 
@@ -100,8 +105,8 @@ func (db *DB) GetOrg(ctx context.Context, ref OrgRef) (*Organization, error) {
 }
 
 // CreateOrganization creates an org and adds the owner as the first member.
-func (db *DB) CreateOrganization(ctx context.Context, name, slug string, public bool, owner UserRef) (uuid.UUID, error) {
-	tx, err := db.Pool.Begin(ctx)
+func (db *DB) CreateOrganization(ctx context.Context, actor uuid.UUID, name, slug string, public bool, owner UserRef) (uuid.UUID, error) {
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -136,12 +141,12 @@ func (db *DB) CreateOrganization(ctx context.Context, name, slug string, public 
 }
 
 // UpdateOrganization updates an org's name, slug, and/or public flag.
-func (db *DB) UpdateOrganization(ctx context.Context, ref OrgRef, name *string, slug *string, public *bool) error {
+func (db *DB) UpdateOrganization(ctx context.Context, actor uuid.UUID, ref OrgRef, name *string, slug *string, public *bool) error {
 	if name == nil && slug == nil && public == nil {
 		return nil
 	}
 
-	tx, err := db.Pool.Begin(ctx)
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return err
 	}
@@ -179,8 +184,8 @@ func (db *DB) UpdateOrganization(ctx context.Context, ref OrgRef, name *string, 
 }
 
 // DeleteOrganization soft-deletes an org and removes all members.
-func (db *DB) DeleteOrganization(ctx context.Context, ref OrgRef) error {
-	tx, err := db.Pool.Begin(ctx)
+func (db *DB) DeleteOrganization(ctx context.Context, actor uuid.UUID, ref OrgRef) error {
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return err
 	}
@@ -205,12 +210,12 @@ func (db *DB) DeleteOrganization(ctx context.Context, ref OrgRef) error {
 }
 
 // ListOrganizations returns a page of orgs and the total count.
-func (db *DB) ListOrganizations(ctx context.Context, cursor uuid.UUID, limit int, filter string) ([]Organization, int, error) {
+func (db *DB) ListOrganizations(ctx context.Context, actor uuid.UUID, cursor uuid.UUID, limit int, filter string) ([]Organization, int, error) {
 	if filter != "" {
 		return nil, 0, ErrFilterNotImplemented
 	}
 
-	tx, err := db.Pool.Begin(ctx)
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -252,8 +257,8 @@ func (db *DB) ListOrganizations(ctx context.Context, cursor uuid.UUID, limit int
 }
 
 // GetOrgMember returns a single member's info.
-func (db *DB) GetOrgMember(ctx context.Context, org OrgRef, user UserRef) (*OrgMember, error) {
-	tx, err := db.Pool.Begin(ctx)
+func (db *DB) GetOrgMember(ctx context.Context, actor uuid.UUID, org OrgRef, user UserRef) (*OrgMember, error) {
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -284,12 +289,12 @@ func (db *DB) GetOrgMember(ctx context.Context, org OrgRef, user UserRef) (*OrgM
 }
 
 // ListOrgMembers returns a page of members for an org.
-func (db *DB) ListOrgMembers(ctx context.Context, org OrgRef, cursor uuid.UUID, limit int, filter string) ([]OrgMember, int, error) {
+func (db *DB) ListOrgMembers(ctx context.Context, actor uuid.UUID, org OrgRef, cursor uuid.UUID, limit int, filter string) ([]OrgMember, int, error) {
 	if filter != "" {
 		return nil, 0, ErrFilterNotImplemented
 	}
 
-	tx, err := db.Pool.Begin(ctx)
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -339,8 +344,8 @@ func (db *DB) ListOrgMembers(ctx context.Context, org OrgRef, cursor uuid.UUID, 
 }
 
 // AddOrgMember adds a user to an org with the given role.
-func (db *DB) AddOrgMember(ctx context.Context, org OrgRef, user UserRef, role string) error {
-	tx, err := db.Pool.Begin(ctx)
+func (db *DB) AddOrgMember(ctx context.Context, actor uuid.UUID, org OrgRef, user UserRef, role string) error {
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return err
 	}
@@ -370,8 +375,8 @@ func (db *DB) AddOrgMember(ctx context.Context, org OrgRef, user UserRef, role s
 }
 
 // UpdateOrgMemberRole changes a member's role. Fails if demoting the last owner.
-func (db *DB) UpdateOrgMemberRole(ctx context.Context, org OrgRef, user UserRef, newRole string) error {
-	tx, err := db.Pool.Begin(ctx)
+func (db *DB) UpdateOrgMemberRole(ctx context.Context, actor uuid.UUID, org OrgRef, user UserRef, newRole string) error {
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return err
 	}
@@ -421,8 +426,8 @@ func (db *DB) UpdateOrgMemberRole(ctx context.Context, org OrgRef, user UserRef,
 }
 
 // RemoveOrgMember removes a user from an org. Fails if they are the last owner.
-func (db *DB) RemoveOrgMember(ctx context.Context, org OrgRef, user UserRef) error {
-	tx, err := db.Pool.Begin(ctx)
+func (db *DB) RemoveOrgMember(ctx context.Context, actor uuid.UUID, org OrgRef, user UserRef) error {
+	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return err
 	}
