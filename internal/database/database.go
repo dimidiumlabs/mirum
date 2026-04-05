@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/tern/v2/migrate"
@@ -46,13 +45,19 @@ func (db *DB) Close() {
 	db.Pool.Close()
 }
 
-// beginAs starts a transaction and sets the RLS actor.
-func (db *DB) beginAs(ctx context.Context, actor uuid.UUID) (pgx.Tx, error) {
+// beginAs starts a transaction and sets the RLS actor. Both app.user_id
+// and app.actor_kind are populated: app_issuper() checks actor_kind for
+// System/Operator principals, and app.user_id for real user superusers.
+func (db *DB) beginAs(ctx context.Context, actor Actor) (pgx.Tx, error) {
 	tx, err := db.Pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, "SELECT set_config('app.user_id', $1, true)", actor.String()); err != nil {
+	if _, err := tx.Exec(ctx,
+		`SELECT set_config('app.user_id', $1, true),
+		        set_config('app.actor_kind', $2, true)`,
+		actor.dbID().String(), actor.kindString(),
+	); err != nil {
 		tx.Rollback(ctx)
 		return nil, err
 	}
@@ -69,8 +74,9 @@ func (db *DB) Migrate(ctx context.Context) error {
 
 	// NOTE: RLS is active on all tables. Migrations with DML (INSERT/UPDATE/DELETE)
 	// must prefix the SQL with:
-	//   SELECT set_config('app.user_id', '00000000-0000-0000-0000-000000000000', true);
-	// This sets the root superuser for the migration's transaction only.
+	//   SELECT set_config('app.actor_kind', 'system', true);
+	// This flips app_issuper() via the actor_kind branch for the migration's
+	// transaction only. No synthetic row in users is needed.
 	migrator, err := migrate.NewMigrator(ctx, conn.Conn(), "schema_version")
 	if err != nil {
 		return errors.Join(ErrMigrate, err)
@@ -86,19 +92,25 @@ func (db *DB) Migrate(ctx context.Context) error {
 			deleted_at TIMESTAMPTZ
 		 );
 
-		INSERT INTO users (id, email, password, superuser)
-		VALUES ('00000000-0000-0000-0000-000000000000', 'root@localhost', '', true);
-
 		CREATE FUNCTION app_user_id() RETURNS uuid STABLE AS $$
 			SELECT current_setting('app.user_id', true)::uuid;
 		$$ LANGUAGE sql;
 
+		-- app_issuper has two independent branches:
+		--  (a) runtime setting app.actor_kind is 'system' or 'operator' —
+		--      set only by beginAs from Go for synthetic principals and by
+		--      DML migrations; cannot be injected via login since there is
+		--      no matching users row to authenticate against.
+		--  (b) the current app.user_id resolves to a users row with
+		--      superuser = true — real support-agent style superusers.
 		CREATE FUNCTION app_issuper() RETURNS boolean STABLE AS $$
-			SELECT EXISTS (
-				SELECT 1 FROM users
-				WHERE id = current_setting('app.user_id', true)::uuid
-				  AND superuser = true
-			);
+			SELECT
+				current_setting('app.actor_kind', true) IN ('system', 'operator')
+				OR EXISTS (
+					SELECT 1 FROM users
+					WHERE id = current_setting('app.user_id', true)::uuid
+					  AND superuser = true
+				);
 		$$ LANGUAGE sql;
 	`, `
 		DROP FUNCTION app_issuper;

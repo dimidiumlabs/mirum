@@ -61,6 +61,53 @@ enum Perm {
   PERM_WORKER_WRITE = 10;
 }
 
+// ErrorInfo is attached as a ConnectError detail on every error.
+// The ConnectError message field is always empty — the server never sends
+// human-readable text. Clients switch on reason to select user-facing copy.
+message ErrorInfo {
+  ErrorReason reason = 1;
+
+  // Short stable identifiers for UI targeting (e.g. {"field": "slug"}).
+  // Never human-readable text.
+  map<string, string> metadata = 2;
+}
+
+enum ErrorReason {
+  ERROR_REASON_UNSPECIFIED = 0;
+  ERROR_REASON_INTERNAL = 1;
+
+  // Lookup failures
+  ERROR_REASON_USER_NOT_FOUND = 10;
+  ERROR_REASON_ORG_NOT_FOUND = 11;
+  ERROR_REASON_WORKER_NOT_FOUND = 12;
+  ERROR_REASON_MEMBER_NOT_FOUND = 13;
+
+  // Conflicts
+  ERROR_REASON_EMAIL_TAKEN = 20;
+  ERROR_REASON_SLUG_TAKEN = 21;
+  ERROR_REASON_ALREADY_MEMBER = 22;
+
+  // State preconditions
+  ERROR_REASON_LAST_OWNER = 30;
+  ERROR_REASON_SOLE_OWNER = 31;
+
+  // Validation
+  ERROR_REASON_INVALID_SLUG = 40;
+  ERROR_REASON_INVALID_ROLE = 41;
+  ERROR_REASON_RESERVED_EMAIL = 42;
+
+  // Auth
+  ERROR_REASON_UNAUTHENTICATED = 50;
+  ERROR_REASON_PERMISSION_DENIED = 51;
+  ERROR_REASON_INVALID_CREDENTIALS = 52;
+  ERROR_REASON_INVALID_CSRF = 53;
+
+  // Infrastructure
+  ERROR_REASON_RATE_LIMITED = 60;
+  ERROR_REASON_UNAVAILABLE = 61;
+  ERROR_REASON_UNIMPLEMENTED = 62;
+}
+
 message UserRef {
   oneof ref {
     option (buf.validate.oneof).required = true;

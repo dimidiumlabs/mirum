@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Nikolay Govorov
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { createAdminClient } from "@/api/client"
+import { formatError } from "@/lib/errors"
 import type { Org } from "@/gen/admin_pb"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,16 +14,21 @@ export type DashboardProps = {
 }
 
 export function Page({ user, csrf }: DashboardProps) {
+  const client = useMemo(() => createAdminClient(csrf), [csrf])
   const [orgs, setOrgs] = useState<Org[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const client = createAdminClient(csrf)
+    const ac = new AbortController()
     client
-      .orgList({})
+      .orgList({}, { signal: ac.signal })
       .then((res) => setOrgs(res.organizations))
-      .catch((err: unknown) => setError(String(err)))
-  }, [csrf])
+      .catch((err: unknown) => {
+        if (ac.signal.aborted) return
+        setError(formatError(err))
+      })
+    return () => ac.abort()
+  }, [client])
 
   return (
     <div className="mx-auto max-w-3xl p-8 space-y-6">

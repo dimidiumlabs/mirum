@@ -11,19 +11,20 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
-	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httprate"
 
+	"dimidiumlabs/mirum/internal/config"
 	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/forges"
+	"dimidiumlabs/mirum/internal/protocol/pb"
 )
 
 // __Host- prefixed cookies can only be set with Secure, Path=/, and no
@@ -46,11 +47,11 @@ func NewWebServer(ctx context.Context, srv *server, adminPath string, adminHandl
 	r.Use(middleware.StripSlashes)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+	r.Use(h.recoverer)
 	r.Use(middleware.Compress(5))
 	r.Use(middleware.Heartbeat("/ping"))
-	r.Use(middleware.Timeout(30 * time.Second))
-	r.Use(middleware.RequestSize(64 << 20)) // 64 MiB global body limit
+	r.Use(middleware.Timeout(config.WebRequestTimeout))
+	r.Use(middleware.RequestSize(config.WebMaxBodyBytes))
 	r.Use(trustedProxyMiddleware(srv.cfg.TrustedProxies))
 
 	r.Use(func(next http.Handler) http.Handler {
@@ -81,25 +82,30 @@ func NewWebServer(ctx context.Context, srv *server, adminPath string, adminHandl
 
 	r.Route("/auth", func(r chi.Router) {
 		r.Use(middleware.NoCache)
-		r.Use(httprate.LimitByIP(10, time.Minute))
-		r.Use(middleware.RequestSize(4096))
+		r.Use(httprate.LimitByIP(config.AuthRateLimit, config.AuthRateWindow))
+		r.Use(middleware.RequestSize(config.AuthMaxBodyBytes))
 
 		r.Get("/login", h.loginPage)
 		r.Post("/login", h.login)
 		r.Post("/logout", h.logout)
 	})
 
-	r.With(middleware.NoCache, httprate.LimitByIP(300, time.Minute)).
+	r.With(middleware.NoCache, httprate.LimitByIP(config.APIRateLimit, config.APIRateWindow)).
 		Mount("/api/v1", http.StripPrefix("/api/v1", adminHandler))
+
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		h.renderError(w, r, http.StatusNotFound)
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		h.renderError(w, r, http.StatusMethodNotAllowed)
+	})
 
 	var tlsCfg *tls.Config
 	if srv.cfg.WebTls != nil {
+		certs := newCertReloader(srv.cfg.WebTls.Cert, srv.cfg.WebTls.Key)
 		tlsCfg = &tls.Config{
-			MinVersion: tls.VersionTLS13,
-			GetCertificate: func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				cert, err := tls.LoadX509KeyPair(srv.cfg.WebTls.Cert, srv.cfg.WebTls.Key)
-				return &cert, err
-			},
+			MinVersion:     tls.VersionTLS13,
+			GetCertificate: certs.GetCertificate,
 		}
 	}
 
@@ -112,38 +118,27 @@ func NewWebServer(ctx context.Context, srv *server, adminPath string, adminHandl
 	}
 }
 
-type callerKey struct{}
-
-type callerInfo struct {
-	UserID    uuid.UUID
-	Email     string
-	Superuser bool
-}
+type actorKey struct{}
 
 type webHandler struct {
 	srv    *server
 	assets *assetResolver
 }
 
-// CallerFromContext returns the authenticated caller, or nil.
-func CallerFromContext(ctx context.Context) *callerInfo {
-	if v, ok := ctx.Value(callerKey{}).(*callerInfo); ok {
+// ActorFromContext returns the authenticated actor, or AnonActor if none.
+func ActorFromContext(ctx context.Context) database.Actor {
+	if v, ok := ctx.Value(actorKey{}).(database.Actor); ok {
 		return v
 	}
-	return nil
+	return database.AnonActor()
 }
 
-// SessionMiddleware resolves the session cookie and puts callerInfo in context.
+// SessionMiddleware resolves the session cookie and puts the Actor in context.
 func (h *webHandler) SessionMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie(sessionCookie); err == nil {
-			if sess, err := h.srv.db.UserGetSession(r.Context(), uuid.Nil, c.Value); err == nil {
-				caller := &callerInfo{
-					UserID:    sess.UserID,
-					Email:     sess.Email,
-					Superuser: sess.Superuser,
-				}
-				ctx := context.WithValue(r.Context(), callerKey{}, caller)
+			if actor, err := h.srv.db.UserGetSession(r.Context(), database.SystemActor(), c.Value); err == nil {
+				ctx := context.WithValue(r.Context(), actorKey{}, actor)
 				r = r.WithContext(ctx)
 			}
 		}
@@ -151,23 +146,53 @@ func (h *webHandler) SessionMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-type authedHandler func(w http.ResponseWriter, r *http.Request, caller *callerInfo)
+type authedHandler func(w http.ResponseWriter, r *http.Request, actor database.Actor)
 
 func authonly(next authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		caller := CallerFromContext(r.Context())
-		if caller == nil {
+		actor := ActorFromContext(r.Context())
+		if actor.Kind() == database.KindAnon {
 			http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 			return
 		}
-		next(w, r, caller)
+		next(w, r, actor)
 	}
 }
 
-func (h *webHandler) index(w http.ResponseWriter, r *http.Request, caller *callerInfo) {
-	h.assets.renderPage(w, "dashboard", map[string]any{
-		"user": map[string]string{"email": caller.Email},
+func (h *webHandler) index(w http.ResponseWriter, r *http.Request, actor database.Actor) {
+	h.assets.renderPage(w, "dashboard", http.StatusOK, map[string]any{
+		"user": map[string]string{"email": actor.Email()},
 		"csrf": csrfToken(w, r),
+	})
+}
+
+// renderError serves the error page with the given HTTP status.
+func (h *webHandler) renderError(w http.ResponseWriter, r *http.Request, status int) {
+	h.assets.renderPage(w, "error", status, map[string]any{"status": status})
+}
+
+// recoverer catches panics, logs them, and renders the 500 page so the
+// client sees something more useful than chi's plaintext default. The
+// http.ErrAbortHandler sentinel is re-raised so net/http's server
+// machinery can recognise an intentional handler abort.
+func (h *webHandler) recoverer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			rvr := recover()
+			if rvr == nil {
+				return
+			}
+			if rvr == http.ErrAbortHandler {
+				panic(rvr)
+			}
+			slog.Error("panic",
+				"err", rvr,
+				"path", r.URL.Path,
+				"stack", string(debug.Stack()),
+			)
+			h.renderError(w, r, http.StatusInternalServerError)
+		}()
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -197,34 +222,40 @@ func (h *webHandler) webhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *webHandler) loginPage(w http.ResponseWriter, r *http.Request) {
-	h.assets.renderPage(w, "login", map[string]any{
-		"csrf": csrfToken(w, r),
-	})
+	h.renderLogin(w, r, http.StatusOK, pb.ErrorReason_ERROR_REASON_UNSPECIFIED)
+}
+
+// renderLogin is the single entry point for every login-flow outcome that
+// lands back on the login page. Reason == UNSPECIFIED means no error banner.
+// No caller writes error text itself — the client maps reason → copy.
+func (h *webHandler) renderLogin(w http.ResponseWriter, r *http.Request, status int, reason pb.ErrorReason) {
+	data := map[string]any{"csrf": csrfToken(w, r)}
+	if reason != pb.ErrorReason_ERROR_REASON_UNSPECIFIED {
+		data["errorReason"] = int32(reason)
+	}
+	h.assets.renderPage(w, "login", status, data)
 }
 
 func (h *webHandler) login(w http.ResponseWriter, r *http.Request) {
 	if !csrfOK(r) {
 		clearCookie(w, csrfCookie)
-		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		h.renderLogin(w, r, http.StatusForbidden, pb.ErrorReason_ERROR_REASON_INVALID_CSRF)
 		return
 	}
 
 	email := r.FormValue("email")
 	password := r.FormValue("password")
 
-	userID, err := h.srv.db.UserVerifyPassword(r.Context(), uuid.Nil, email, password, []byte(h.srv.cfg.Pepper))
+	userID, err := h.srv.db.UserVerifyPassword(r.Context(), database.SystemActor(), email, password, []byte(h.srv.cfg.Pepper))
 	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		h.assets.renderPage(w, "login", map[string]any{
-			"csrf":  csrfToken(w, r),
-			"error": "Wrong email or password. Please try again.",
-		})
+		h.renderLogin(w, r, http.StatusUnauthorized, pb.ErrorReason_ERROR_REASON_INVALID_CREDENTIALS)
 		return
 	}
 
-	token, err := h.srv.db.UserCreateSession(r.Context(), uuid.Nil, userID)
+	token, err := h.srv.db.UserCreateSession(r.Context(), database.SystemActor(), userID)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		slog.Error("create session failed", "err", err)
+		h.renderLogin(w, r, http.StatusInternalServerError, pb.ErrorReason_ERROR_REASON_INTERNAL)
 		return
 	}
 
@@ -235,18 +266,20 @@ func (h *webHandler) login(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(database.SessionTTL.Seconds()),
+		MaxAge:   int(config.SessionTTL.Seconds()),
 	})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (h *webHandler) logout(w http.ResponseWriter, r *http.Request) {
 	if !csrfOK(r) {
-		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		// Forged logout attempt — ignore silently. Session stays valid,
+		// user ends up wherever / takes them.
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 	if c, err := r.Cookie(sessionCookie); err == nil {
-		h.srv.db.UserDeleteSession(r.Context(), uuid.Nil, c.Value)
+		h.srv.db.UserDeleteSession(r.Context(), database.SystemActor(), c.Value)
 	}
 	clearCookie(w, sessionCookie)
 	clearCookie(w, csrfCookie)
@@ -270,6 +303,7 @@ func csrfToken(w http.ResponseWriter, r *http.Request) string {
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
+		MaxAge:   int(config.SessionTTL.Seconds()),
 	})
 	return token
 }

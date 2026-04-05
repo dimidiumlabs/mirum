@@ -183,7 +183,7 @@ window.__vite_plugin_react_preamble_installed__ = true`,
 	return ar.assets[name]
 }
 
-func (ar *assetResolver) renderPage(w http.ResponseWriter, entry string, data any) {
+func (ar *assetResolver) renderPage(w http.ResponseWriter, entry string, status int, data any) {
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -196,6 +196,9 @@ func (ar *assetResolver) renderPage(w http.ResponseWriter, entry string, data an
 	w.Header().Set("Cache-Control", "no-cache")
 	if assets.CSP != "" {
 		w.Header().Set("Content-Security-Policy", assets.CSP)
+	}
+	if status != 0 && status != http.StatusOK {
+		w.WriteHeader(status)
 	}
 
 	if err := shellTmpl.Execute(w, struct {

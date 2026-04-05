@@ -7,6 +7,8 @@ import (
 	"context"
 	"math/rand/v2"
 	"time"
+
+	"dimidiumlabs/mirum/internal/config"
 )
 
 type Backoff struct {
@@ -15,7 +17,7 @@ type Backoff struct {
 }
 
 func NewBackoff() *Backoff {
-	return &Backoff{Min: time.Second, Max: 60 * time.Second}
+	return &Backoff{Min: config.WorkerBackoffMin, Max: config.WorkerBackoffMax}
 }
 
 func (b *Backoff) Reset() {

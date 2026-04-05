@@ -7,14 +7,18 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { ErrorReason } from "@/gen/admin_pb"
+import { textForReason } from "@/lib/errors"
 
 export type LoginFormProps = {
   csrf: string
-  error?: string
+  errorReason?: ErrorReason
 }
 
-export function Page({ csrf, error: initialError }: LoginFormProps) {
-  const [error, setError] = useState(initialError)
+export function Page({ csrf, errorReason }: LoginFormProps) {
+  const [error, setError] = useState(
+    errorReason !== undefined ? textForReason(errorReason) : undefined,
+  )
   const dismissError = () => setError(undefined)
 
   return (

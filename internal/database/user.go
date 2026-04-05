@@ -21,14 +21,21 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/argon2"
+
+	"dimidiumlabs/mirum/internal/config"
 )
 
 var (
-	ErrSoleOwner    = errors.New("database: sole owner of an organization")
-	ErrEmailTaken   = errors.New("database: email already taken")
-	ErrInvalidCreds = errors.New("database: invalid credentials")
-	ErrUserNotFound = errors.New("database: user not found")
+	ErrSoleOwner     = errors.New("database: sole owner of an organization")
+	ErrEmailTaken    = errors.New("database: email already taken")
+	ErrInvalidCreds  = errors.New("database: invalid credentials")
+	ErrUserNotFound  = errors.New("database: user not found")
+	ErrReservedEmail = errors.New("database: email uses a reserved domain")
 )
+
+// reservedEmailSuffix is the domain carved out for synthetic actors
+// (system/operator/anon). Real users cannot register with this suffix.
+const reservedEmailSuffix = "@mirum.local"
 
 // UserRef identifies a user by ID or email.
 type UserRef struct {
@@ -53,8 +60,6 @@ const (
 	argonMemory  = 64 * 1024 // 64 MB
 	argonKeyLen  = 32
 	argonThreads = 2
-
-	SessionTTL = 14 * 24 * time.Hour // 14 days
 )
 
 // User holds info about a user.
@@ -62,13 +67,6 @@ type User struct {
 	ID        uuid.UUID
 	Email     string
 	CreatedAt time.Time
-}
-
-// Session holds info about an authenticated session.
-type Session struct {
-	UserID    uuid.UUID
-	Email     string
-	Superuser bool
 }
 
 // hashToken returns the hex-encoded SHA-256 of a session token.
@@ -135,7 +133,11 @@ func hashPassword(password string, pepper []byte) (string, error) {
 
 // UserCreate hashes the password with argon2id and inserts a new user.
 // The pepper is a server-side secret not stored in the database.
-func (db *DB) UserCreate(ctx context.Context, actor uuid.UUID, email, password string, pepper []byte) (uuid.UUID, error) {
+func (db *DB) UserCreate(ctx context.Context, actor Actor, email, password string, pepper []byte) (uuid.UUID, error) {
+	if strings.HasSuffix(strings.ToLower(email), reservedEmailSuffix) {
+		return uuid.Nil, ErrReservedEmail
+	}
+
 	hash, err := hashPassword(password, pepper)
 	if err != nil {
 		return uuid.Nil, err
@@ -163,7 +165,7 @@ func (db *DB) UserCreate(ctx context.Context, actor uuid.UUID, email, password s
 }
 
 // GetUser returns a user by ref (ID or email).
-func (db *DB) GetUser(ctx context.Context, actor uuid.UUID, ref UserRef) (*User, error) {
+func (db *DB) GetUser(ctx context.Context, actor Actor, ref UserRef) (*User, error) {
 	col, val := ref.where()
 
 	tx, err := db.beginAs(ctx, actor)
@@ -190,7 +192,7 @@ func (db *DB) GetUser(ctx context.Context, actor uuid.UUID, ref UserRef) (*User,
 }
 
 // ListUsers returns a page of users and the total count.
-func (db *DB) ListUsers(ctx context.Context, actor uuid.UUID, cursor uuid.UUID, limit int, filter string) ([]User, int, error) {
+func (db *DB) ListUsers(ctx context.Context, actor Actor, cursor uuid.UUID, limit int, filter string) ([]User, int, error) {
 	if filter != "" {
 		return nil, 0, ErrFilterNotImplemented
 	}
@@ -281,9 +283,12 @@ func resolveUser(ctx context.Context, tx pgx.Tx, ref UserRef) (uuid.UUID, error)
 
 // UserUpdate updates a user's email and/or password.
 // Invalidates all sessions when password changes.
-func (db *DB) UserUpdate(ctx context.Context, actor uuid.UUID, ref UserRef, email *string, password *string, pepper []byte) error {
+func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *string, password *string, pepper []byte) error {
 	if email == nil && password == nil {
 		return nil
+	}
+	if email != nil && strings.HasSuffix(strings.ToLower(*email), reservedEmailSuffix) {
+		return ErrReservedEmail
 	}
 
 	tx, err := db.beginAs(ctx, actor)
@@ -335,7 +340,7 @@ func (db *DB) UserUpdate(ctx context.Context, actor uuid.UUID, ref UserRef, emai
 
 // UserDelete soft-deletes a user.
 // Fails if the user is the sole owner of any organization.
-func (db *DB) UserDelete(ctx context.Context, actor uuid.UUID, ref UserRef) error {
+func (db *DB) UserDelete(ctx context.Context, actor Actor, ref UserRef) error {
 	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return err
@@ -369,7 +374,7 @@ func (db *DB) UserDelete(ctx context.Context, actor uuid.UUID, ref UserRef) erro
 }
 
 // UserVerifyPassword checks credentials and returns the user ID.
-func (db *DB) UserVerifyPassword(ctx context.Context, actor uuid.UUID, email, password string, pepper []byte) (uuid.UUID, error) {
+func (db *DB) UserVerifyPassword(ctx context.Context, actor Actor, email, password string, pepper []byte) (uuid.UUID, error) {
 	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return uuid.Nil, err
@@ -393,41 +398,49 @@ func (db *DB) UserVerifyPassword(ctx context.Context, actor uuid.UUID, email, pa
 	return id, nil
 }
 
-// UserGetSession returns session info for a valid, non-expired session.
-func (db *DB) UserGetSession(ctx context.Context, actor uuid.UUID, token string) (*Session, error) {
+// UserGetSession resolves a session token into the Actor it authenticates.
+// Returns an invalid zero Actor on any error; callers must check err.
+func (db *DB) UserGetSession(ctx context.Context, actor Actor, token string) (Actor, error) {
 	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
-		return nil, err
+		return Actor{}, err
 	}
 	defer tx.Rollback(ctx)
 
-	var s Session
+	var (
+		userID    uuid.UUID
+		email     string
+		superuser bool
+		expiresAt time.Time
+	)
 	h := hashToken(token)
-	var expiresAt time.Time
 
 	if err := tx.QueryRow(ctx,
 		`SELECT s.user_id, u.email, u.superuser, s.expires_at
 		 FROM sessions s JOIN users u ON u.id = s.user_id
 		 WHERE s.token = $1 AND s.expires_at > now() AND u.deleted_at IS NULL`,
 		h,
-	).Scan(&s.UserID, &s.Email, &s.Superuser, &expiresAt); err != nil {
-		return nil, err
+	).Scan(&userID, &email, &superuser, &expiresAt); err != nil {
+		return Actor{}, err
 	}
 
-	if time.Until(expiresAt) < SessionTTL/2 {
+	if time.Until(expiresAt) < config.SessionTTL/2 {
 		if _, err := tx.Exec(ctx,
 			`UPDATE sessions SET expires_at = now() + $2 WHERE token = $1`,
-			h, SessionTTL,
+			h, config.SessionTTL,
 		); err != nil {
-			return nil, err
+			return Actor{}, err
 		}
 	}
 
-	return &s, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return Actor{}, err
+	}
+	return UserActor(userID, email, superuser), nil
 }
 
 // UserCreateSession generates a random token, stores its hash, and returns the token.
-func (db *DB) UserCreateSession(ctx context.Context, actor uuid.UUID, userID uuid.UUID) (string, error) {
+func (db *DB) UserCreateSession(ctx context.Context, actor Actor, userID uuid.UUID) (string, error) {
 	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return "", err
@@ -442,7 +455,7 @@ func (db *DB) UserCreateSession(ctx context.Context, actor uuid.UUID, userID uui
 
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, now() + $3)`,
-		hashToken(token), userID, SessionTTL,
+		hashToken(token), userID, config.SessionTTL,
 	); err != nil {
 		return "", err
 	}
@@ -451,7 +464,7 @@ func (db *DB) UserCreateSession(ctx context.Context, actor uuid.UUID, userID uui
 }
 
 // UserDeleteSession removes a session (logout).
-func (db *DB) UserDeleteSession(ctx context.Context, actor uuid.UUID, token string) error {
+func (db *DB) UserDeleteSession(ctx context.Context, actor Actor, token string) error {
 	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return err
@@ -464,9 +477,9 @@ func (db *DB) UserDeleteSession(ctx context.Context, actor uuid.UUID, token stri
 	return tx.Commit(ctx)
 }
 
-// PurgeExpiredSessions deletes all expired sessions. Runs as root.
+// PurgeExpiredSessions deletes all expired sessions. Runs as SystemActor.
 func (db *DB) PurgeExpiredSessions(ctx context.Context) error {
-	tx, err := db.beginAs(ctx, uuid.Nil)
+	tx, err := db.beginAs(ctx, SystemActor())
 	if err != nil {
 		return err
 	}

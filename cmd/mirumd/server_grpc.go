@@ -17,8 +17,9 @@ import (
 
 	"connectrpc.com/connect"
 	"connectrpc.com/validate"
-	"github.com/google/uuid"
 
+	"dimidiumlabs/mirum/internal/config"
+	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/protocol"
 	"dimidiumlabs/mirum/internal/protocol/pb"
 	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
@@ -34,19 +35,18 @@ func NewGrpcServer(ctx context.Context, srv *server) *http.Server {
 	mux := http.NewServeMux()
 	mux.Handle(path, workerLog(handler))
 
+	certs := newCertReloader(srv.cfg.GrpcTls.Cert, srv.cfg.GrpcTls.Key)
+
 	return &http.Server{
 		Handler: mux,
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
 		},
 		TLSConfig: &tls.Config{
-			NextProtos: []string{"h2"},
-			MinVersion: tls.VersionTLS13,
-			ClientAuth: tls.RequireAnyClientCert,
-			GetCertificate: func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				cert, err := tls.LoadX509KeyPair(srv.cfg.GrpcTls.Cert, srv.cfg.GrpcTls.Key)
-				return &cert, err
-			},
+			NextProtos:     []string{"h2"},
+			MinVersion:     tls.VersionTLS13,
+			ClientAuth:     tls.RequireAnyClientCert,
+			GetCertificate: certs.GetCertificate,
 			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 				if len(rawCerts) == 0 {
 					return errors.New("client certificate required")
@@ -62,14 +62,14 @@ func NewGrpcServer(ctx context.Context, srv *server) *http.Server {
 					return errors.New("ed25519 certificate required")
 				}
 
-				if _, err := srv.db.LookupWorker(context.Background(), uuid.Nil, pubKey); err != nil {
+				if _, err := srv.db.LookupWorker(context.Background(), database.SystemActor(), pubKey); err != nil {
 					return fmt.Errorf("unknown worker: %w", err)
 				}
 
 				// Clock skew: NotBefore is set to time.Now() when the cert was generated.
 				// Checked here (once per TLS handshake), not in the interceptor,
 				// because HTTP/2 reuses the connection and NotBefore would go stale.
-				if skew := time.Since(c.NotBefore).Abs(); skew > time.Minute {
+				if skew := time.Since(c.NotBefore).Abs(); skew > config.WorkerClockSkewLimit {
 					return fmt.Errorf("%w: %s", protocol.ErrClockSkew, skew.Truncate(time.Second))
 				}
 

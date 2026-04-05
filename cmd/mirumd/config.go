@@ -15,7 +15,7 @@ type tlsConfig struct {
 	Key  string `yaml:"key"`
 }
 
-type config struct {
+type appConfig struct {
 	WebAddr     string `yaml:"web_addr"`
 	GrpcAddr    string `yaml:"grpc_addr"`
 	AdminSocket string `yaml:"admin_socket"`
@@ -31,8 +31,8 @@ type config struct {
 	WebhookSecret string `yaml:"webhook_secret"`
 }
 
-func getConfig(filename string) (*config, error) {
-	cfg := &config{
+func getConfig(filename string) (*appConfig, error) {
+	cfg := &appConfig{
 		GrpcAddr:    ":2026",
 		WebAddr:     ":3000",
 		AdminSocket: "/run/mirumd/admin.sock",

@@ -49,11 +49,11 @@ func (a *ApiAuthInterceptor) authorize(ctx context.Context, procedure string, re
 		return nil
 	}
 
-	caller := CallerFromContext(ctx)
-	if caller == nil {
-		return connect.NewError(connect.CodeUnauthenticated, nil)
+	actor := ActorFromContext(ctx)
+	if actor.Kind() == database.KindAnon {
+		return errUnauthenticated
 	}
-	if caller.Superuser {
+	if actor.IsSuperuser() {
 		return nil
 	}
 
@@ -66,7 +66,7 @@ func (a *ApiAuthInterceptor) authorize(ctx context.Context, procedure string, re
 			return errDenied
 		}
 
-		if isSelf(*caller, req) {
+		if isSelf(actor, req) {
 			return nil
 		}
 		return errDenied
@@ -80,18 +80,18 @@ func (a *ApiAuthInterceptor) authorize(ctx context.Context, procedure string, re
 	case pbconnect.AdminOrgCreateProcedure:
 		return nil
 	case pbconnect.AdminOrgUpdateProcedure:
-		return a.checkOrgPerm(ctx, *caller, req, pb.Perm_PERM_ORG_WRITE)
+		return a.checkOrgPerm(ctx, actor, req, pb.Perm_PERM_ORG_WRITE)
 	case pbconnect.AdminOrgDeleteProcedure:
-		return a.checkOrgPerm(ctx, *caller, req, pb.Perm_PERM_ORG_DELETE)
+		return a.checkOrgPerm(ctx, actor, req, pb.Perm_PERM_ORG_DELETE)
 
 	// OrgMember — org-scoped
 	case pbconnect.AdminOrgMemberGetProcedure,
 		pbconnect.AdminOrgMemberListProcedure:
-		return a.checkOrgPerm(ctx, *caller, req, pb.Perm_PERM_ORG_MEMBER_READ)
+		return a.checkOrgPerm(ctx, actor, req, pb.Perm_PERM_ORG_MEMBER_READ)
 	case pbconnect.AdminOrgMemberAddProcedure,
 		pbconnect.AdminOrgMemberUpdateProcedure,
 		pbconnect.AdminOrgMemberRemoveProcedure:
-		return a.checkOrgPerm(ctx, *caller, req, pb.Perm_PERM_ORG_MEMBER_WRITE)
+		return a.checkOrgPerm(ctx, actor, req, pb.Perm_PERM_ORG_MEMBER_WRITE)
 
 	// Worker — any authenticated can read
 	case pbconnect.AdminWorkerGetProcedure,
@@ -103,26 +103,29 @@ func (a *ApiAuthInterceptor) authorize(ctx context.Context, procedure string, re
 		if orgRefFromRequest(req) == nil {
 			return errDenied
 		}
-		return a.checkOrgPerm(ctx, *caller, req, pb.Perm_PERM_WORKER_WRITE)
+		return a.checkOrgPerm(ctx, actor, req, pb.Perm_PERM_WORKER_WRITE)
 
 	// Worker delete — lookup worker's org, then check
 	case pbconnect.AdminWorkerDeleteProcedure:
-		return a.checkWorkerDelete(ctx, *caller, req)
+		return a.checkWorkerDelete(ctx, actor, req)
 
 	default:
 		return errDenied
 	}
 }
 
-var errDenied = connect.NewError(connect.CodePermissionDenied, nil)
+var (
+	errDenied          = newAPIError(connect.CodePermissionDenied, pb.ErrorReason_ERROR_REASON_PERMISSION_DENIED, nil)
+	errUnauthenticated = newAPIError(connect.CodeUnauthenticated, pb.ErrorReason_ERROR_REASON_UNAUTHENTICATED, nil)
+)
 
-// checkOrgPerm extracts OrgRef from request and checks caller's role permission.
-func (a *ApiAuthInterceptor) checkOrgPerm(ctx context.Context, caller callerInfo, req connect.AnyRequest, perm pb.Perm) error {
+// checkOrgPerm extracts OrgRef from request and checks the actor's role permission.
+func (a *ApiAuthInterceptor) checkOrgPerm(ctx context.Context, actor database.Actor, req connect.AnyRequest, perm pb.Perm) error {
 	ref := orgRefFromRequest(req)
 	if ref == nil {
 		return errDenied
 	}
-	member, err := a.srv.db.GetOrgMember(ctx, caller.UserID, orgRef(ref), database.UserByID(caller.UserID))
+	member, err := a.srv.db.GetOrgMember(ctx, actor, orgRef(ref), database.UserByID(actor.UserID()))
 	if err != nil {
 		return errDenied
 	}
@@ -133,19 +136,19 @@ func (a *ApiAuthInterceptor) checkOrgPerm(ctx context.Context, caller callerInfo
 }
 
 // checkWorkerDelete looks up the worker's org and checks permission.
-func (a *ApiAuthInterceptor) checkWorkerDelete(ctx context.Context, caller callerInfo, req connect.AnyRequest) error {
+func (a *ApiAuthInterceptor) checkWorkerDelete(ctx context.Context, actor database.Actor, req connect.AnyRequest) error {
 	m, ok := req.Any().(*pb.WorkerDeleteRequest)
 	if !ok {
 		return errDenied
 	}
-	w, err := a.srv.db.GetWorker(ctx, caller.UserID, uuid.UUID(m.Id))
+	w, err := a.srv.db.GetWorker(ctx, actor, uuid.UUID(m.Id))
 	if err != nil {
 		return errDenied
 	}
 	if w.OrgID == nil {
 		return errDenied // global worker — superuser only
 	}
-	member, err := a.srv.db.GetOrgMember(ctx, caller.UserID, database.OrgByID(*w.OrgID), database.UserByID(caller.UserID))
+	member, err := a.srv.db.GetOrgMember(ctx, actor, database.OrgByID(*w.OrgID), database.UserByID(actor.UserID()))
 	if err != nil {
 		return errDenied
 	}
@@ -155,8 +158,8 @@ func (a *ApiAuthInterceptor) checkWorkerDelete(ctx context.Context, caller calle
 	return nil
 }
 
-// isSelf checks if the request targets the caller's own user.
-func isSelf(caller callerInfo, req connect.AnyRequest) bool {
+// isSelf checks if the request targets the actor's own user.
+func isSelf(actor database.Actor, req connect.AnyRequest) bool {
 	var ref *pb.UserRef
 	switch m := req.Any().(type) {
 	case *pb.UserGetRequest:
@@ -171,9 +174,9 @@ func isSelf(caller callerInfo, req connect.AnyRequest) bool {
 	}
 	switch v := ref.GetRef().(type) {
 	case *pb.UserRef_Id:
-		return uuid.UUID(v.Id) == caller.UserID
+		return uuid.UUID(v.Id) == actor.UserID()
 	case *pb.UserRef_Email:
-		return v.Email == caller.Email
+		return v.Email == actor.Email()
 	default:
 		return false
 	}

@@ -26,7 +26,7 @@ type Worker struct {
 }
 
 // GetWorker returns a worker by ID.
-func (db *DB) GetWorker(ctx context.Context, actor uuid.UUID, id uuid.UUID) (*Worker, error) {
+func (db *DB) GetWorker(ctx context.Context, actor Actor, id uuid.UUID) (*Worker, error) {
 	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func (db *DB) GetWorker(ctx context.Context, actor uuid.UUID, id uuid.UUID) (*Wo
 }
 
 // CreateWorker registers a new worker with the given public key and optional org.
-func (db *DB) CreateWorker(ctx context.Context, actor uuid.UUID, publicKey []byte, org *OrgRef) (uuid.UUID, error) {
+func (db *DB) CreateWorker(ctx context.Context, actor Actor, publicKey []byte, org *OrgRef) (uuid.UUID, error) {
 	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return uuid.Nil, err
@@ -76,7 +76,7 @@ func (db *DB) CreateWorker(ctx context.Context, actor uuid.UUID, publicKey []byt
 }
 
 // DeleteWorker soft-deletes a worker by ID.
-func (db *DB) DeleteWorker(ctx context.Context, actor uuid.UUID, id uuid.UUID) error {
+func (db *DB) DeleteWorker(ctx context.Context, actor Actor, id uuid.UUID) error {
 	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return err
@@ -97,7 +97,7 @@ func (db *DB) DeleteWorker(ctx context.Context, actor uuid.UUID, id uuid.UUID) e
 }
 
 // ListWorkers returns a page of workers and the total count.
-func (db *DB) ListWorkers(ctx context.Context, actor uuid.UUID, cursor uuid.UUID, limit int, filter string) ([]Worker, int, error) {
+func (db *DB) ListWorkers(ctx context.Context, actor Actor, cursor uuid.UUID, limit int, filter string) ([]Worker, int, error) {
 	if filter != "" {
 		return nil, 0, ErrFilterNotImplemented
 	}
@@ -144,7 +144,7 @@ func (db *DB) ListWorkers(ctx context.Context, actor uuid.UUID, cursor uuid.UUID
 }
 
 // LookupWorker finds an active worker by its ed25519 public key.
-func (db *DB) LookupWorker(ctx context.Context, actor uuid.UUID, publicKey []byte) (*Worker, error) {
+func (db *DB) LookupWorker(ctx context.Context, actor Actor, publicKey []byte) (*Worker, error) {
 	tx, err := db.beginAs(ctx, actor)
 	if err != nil {
 		return nil, err

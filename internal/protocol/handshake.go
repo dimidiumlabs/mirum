@@ -15,6 +15,8 @@ import (
 	"net/url"
 	"os"
 	"time"
+
+	"dimidiumlabs/mirum/internal/config"
 )
 
 var (
@@ -108,7 +110,7 @@ func SelfSignedCert(key ed25519.PrivateKey, meta *WorkerMeta) (tls.Certificate, 
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		NotBefore:    now,
-		NotAfter:     now.Add(24 * time.Hour),
+		NotAfter:     now.Add(config.WorkerCertLifetime),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		URIs:         []*url.URL{meta.URI()},

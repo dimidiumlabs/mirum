@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"dimidiumlabs/mirum/internal/config"
 	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/forges"
 	"dimidiumlabs/mirum/internal/protocol/pb"
@@ -18,7 +19,7 @@ import (
 
 // server holds the shared application state.
 type server struct {
-	cfg   *config
+	cfg   *appConfig
 	db    *database.DB
 	forge forges.Forge
 
@@ -27,13 +28,16 @@ type server struct {
 	taskCounter atomic.Int64
 }
 
+// Close releases resources owned by the server. Call exactly once, after
+// all HTTP servers have finished Shutdown.
 func (s *server) Close() {
 	close(s.queue)
+	s.db.Close()
 }
 
 // PurgeSessions periodically deletes expired sessions until ctx is cancelled.
 func (s *server) PurgeSessions(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Hour)
+	ticker := time.NewTicker(config.SessionPurgeInterval)
 	defer ticker.Stop()
 
 	for {
