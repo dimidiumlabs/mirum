@@ -8,10 +8,8 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"crypto/tls"
-	"embed"
 	"encoding/base64"
 	"errors"
-	"html/template"
 	"io"
 	"net"
 	"net/http"
@@ -28,34 +26,57 @@ import (
 	"dimidiumlabs/mirum/internal/forges"
 )
 
-//go:embed templates/*.html
-var templateFS embed.FS
-
-var (
-	indexTmpl = template.Must(template.ParseFS(templateFS, "templates/layout.html", "templates/index.html"))
-	loginTmpl = template.Must(template.ParseFS(templateFS, "templates/layout.html", "templates/login.html"))
+// __Host- prefixed cookies can only be set with Secure, Path=/, and no
+// Domain attribute. Browsers silently reject violations, so subdomain and
+// network attackers cannot forge them.
+const (
+	sessionCookie = "__Host-session"
+	csrfCookie    = "__Host-csrf"
 )
 
 func NewWebServer(ctx context.Context, srv *server, adminPath string, adminHandler http.Handler) *http.Server {
-	h := &webHandler{srv: srv}
+	h := &webHandler{
+		srv:    srv,
+		assets: newAssetResolver(),
+	}
 
 	r := chi.NewRouter()
 
 	r.Use(middleware.CleanPath)
 	r.Use(middleware.StripSlashes)
 	r.Use(middleware.RequestID)
-	r.Use(trustedProxyMiddleware(srv.cfg.TrustedProxies))
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
 	r.Use(middleware.Heartbeat("/ping"))
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(middleware.RequestSize(64 << 20)) // 64 MiB global body limit
+	r.Use(trustedProxyMiddleware(srv.cfg.TrustedProxies))
+
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Security-Policy", csp)
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+			w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+			w.Header().Set("Permissions-Policy", "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()")
+
+			if srv.cfg.WebTls != nil {
+				w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	// The authorization session sets the user to ctx
 	r.Use(h.SessionMiddleware)
 
-	r.Get("/", h.index)
+	r.With(middleware.SetHeader("Cache-Control", "public, max-age=31536000, immutable")).
+		Mount("/assets", assetsHandler())
+
+	r.Get("/", authonly(h.index))
 	r.Post("/webhook", h.webhook)
 
 	r.Route("/auth", func(r chi.Router) {
@@ -68,11 +89,8 @@ func NewWebServer(ctx context.Context, srv *server, adminPath string, adminHandl
 		r.Post("/logout", h.logout)
 	})
 
-	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(middleware.NoCache)
-		r.Use(httprate.LimitByIP(300, time.Minute))
-		r.Mount(adminPath, adminHandler)
-	})
+	r.With(middleware.NoCache, httprate.LimitByIP(300, time.Minute)).
+		Mount("/api/v1", http.StripPrefix("/api/v1", adminHandler))
 
 	var tlsCfg *tls.Config
 	if srv.cfg.WebTls != nil {
@@ -103,7 +121,8 @@ type callerInfo struct {
 }
 
 type webHandler struct {
-	srv *server
+	srv    *server
+	assets *assetResolver
 }
 
 // CallerFromContext returns the authenticated caller, or nil.
@@ -117,11 +136,12 @@ func CallerFromContext(ctx context.Context) *callerInfo {
 // SessionMiddleware resolves the session cookie and puts callerInfo in context.
 func (h *webHandler) SessionMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if c, err := r.Cookie("session"); err == nil {
+		if c, err := r.Cookie(sessionCookie); err == nil {
 			if sess, err := h.srv.db.UserGetSession(r.Context(), uuid.Nil, c.Value); err == nil {
 				caller := &callerInfo{
-					UserID: sess.UserID,
-					Email:  sess.Email,
+					UserID:    sess.UserID,
+					Email:     sess.Email,
+					Superuser: sess.Superuser,
 				}
 				ctx := context.WithValue(r.Context(), callerKey{}, caller)
 				r = r.WithContext(ctx)
@@ -131,14 +151,24 @@ func (h *webHandler) SessionMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (h *webHandler) index(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	var data struct{ Email, CSRF string }
-	if caller := CallerFromContext(r.Context()); caller != nil {
-		data.Email = caller.Email
-		data.CSRF = csrfToken(w, r)
+type authedHandler func(w http.ResponseWriter, r *http.Request, caller *callerInfo)
+
+func authonly(next authedHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		caller := CallerFromContext(r.Context())
+		if caller == nil {
+			http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
+			return
+		}
+		next(w, r, caller)
 	}
-	indexTmpl.ExecuteTemplate(w, "layout", data)
+}
+
+func (h *webHandler) index(w http.ResponseWriter, r *http.Request, caller *callerInfo) {
+	h.assets.renderPage(w, "dashboard", map[string]any{
+		"user": map[string]string{"email": caller.Email},
+		"csrf": csrfToken(w, r),
+	})
 }
 
 func (h *webHandler) webhook(w http.ResponseWriter, r *http.Request) {
@@ -167,13 +197,14 @@ func (h *webHandler) webhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *webHandler) loginPage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	loginTmpl.ExecuteTemplate(w, "layout", map[string]string{"CSRF": csrfToken(w, r)})
+	h.assets.renderPage(w, "login", map[string]any{
+		"csrf": csrfToken(w, r),
+	})
 }
 
 func (h *webHandler) login(w http.ResponseWriter, r *http.Request) {
 	if !csrfOK(r) {
-		clearCookie(w, "csrf")
+		clearCookie(w, csrfCookie)
 		http.Error(w, "invalid csrf token", http.StatusForbidden)
 		return
 	}
@@ -184,9 +215,9 @@ func (h *webHandler) login(w http.ResponseWriter, r *http.Request) {
 	userID, err := h.srv.db.UserVerifyPassword(r.Context(), uuid.Nil, email, password, []byte(h.srv.cfg.Pepper))
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
-		loginTmpl.ExecuteTemplate(w, "layout", map[string]string{
-			"Error": "Invalid credentials",
-			"CSRF":  csrfToken(w, r),
+		h.assets.renderPage(w, "login", map[string]any{
+			"csrf":  csrfToken(w, r),
+			"error": "Wrong email or password. Please try again.",
 		})
 		return
 	}
@@ -198,7 +229,7 @@ func (h *webHandler) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "session",
+		Name:     sessionCookie,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
@@ -214,24 +245,26 @@ func (h *webHandler) logout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid csrf token", http.StatusForbidden)
 		return
 	}
-	if c, err := r.Cookie("session"); err == nil {
+	if c, err := r.Cookie(sessionCookie); err == nil {
 		h.srv.db.UserDeleteSession(r.Context(), uuid.Nil, c.Value)
 	}
-	clearCookie(w, "session")
-	clearCookie(w, "csrf")
+	clearCookie(w, sessionCookie)
+	clearCookie(w, csrfCookie)
 	http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 }
 
 // csrfToken returns the current CSRF token, setting a cookie if absent.
 func csrfToken(w http.ResponseWriter, r *http.Request) string {
-	if c, err := r.Cookie("csrf"); err == nil && c.Value != "" {
+	if c, err := r.Cookie(csrfCookie); err == nil && c.Value != "" {
 		return c.Value
 	}
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	token := base64.RawURLEncoding.EncodeToString(b)
 	http.SetCookie(w, &http.Cookie{
-		Name:     "csrf",
+		Name:     csrfCookie,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
@@ -241,14 +274,19 @@ func csrfToken(w http.ResponseWriter, r *http.Request) string {
 	return token
 }
 
-// csrfOK checks that the form field matches the cookie (double-submit).
+// csrfOK checks that the form field or X-CSRF-Token header matches the
+// cookie (double-submit). Form posts use the hidden "csrf" field; API calls
+// from the SPA pass the token via the X-CSRF-Token header.
 func csrfOK(r *http.Request) bool {
-	cookie, err := r.Cookie("csrf")
+	cookie, err := r.Cookie(csrfCookie)
 	if err != nil || cookie.Value == "" {
 		return false
 	}
-	field := r.FormValue("csrf")
-	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(field)) == 1
+	token := r.FormValue("csrf")
+	if token == "" {
+		token = r.Header.Get("X-CSRF-Token")
+	}
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(token)) == 1
 }
 
 func clearCookie(w http.ResponseWriter, name string) {

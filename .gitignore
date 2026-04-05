@@ -1,8 +1,12 @@
 # Copyright (c) 2026 Nikolay Govorov
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+/dev
 /build
 /.task
+cmd/mirumd/static
+cmd/mirumd/web/node_modules
 
 # grpc generated code
-internal/protocol/pb
+/internal/protocol/pb
+/cmd/mirumd/web/gen

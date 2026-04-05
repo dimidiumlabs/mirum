@@ -12,7 +12,8 @@ path = [
   "README.md",
   "pkg/logo.svg",
   "pkg/dl/*",
-  "proto/buf.*"
+  "proto/buf.*",
+  "cmd/mirumd/web/*.json",
 ]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov <me@govorov.online>"
 SPDX-License-Identifier = "AGPL-3.0-or-later"

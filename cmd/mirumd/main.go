@@ -28,6 +28,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func hardenServer(s *http.Server) *http.Server {
+	s.IdleTimeout = 120 * time.Second
+	s.MaxHeaderBytes = 1 << 16
+	s.ReadHeaderTimeout = 10 * time.Second
+	return s
+}
+
 func main() {
 	var socketPath string
 
@@ -297,12 +304,12 @@ func daemon(configFile, socketFlag string) {
 
 	adminPath, adminHandler := NewAdminHandler(srv)
 
-	webSrv := NewWebServer(ctx, srv, adminPath, adminHandler)
-	grpcSrv := NewGrpcServer(ctx, srv)
+	webSrv := hardenServer(NewWebServer(ctx, srv, adminPath, adminHandler))
+	grpcSrv := hardenServer(NewGrpcServer(ctx, srv))
 
 	adminMux := http.NewServeMux()
 	adminMux.Handle(adminPath, adminHandler)
-	adminSrv := &http.Server{
+	adminSrv := hardenServer(&http.Server{
 		Handler: adminMux,
 		ConnContext: func(ctx context.Context, _ net.Conn) context.Context {
 			return context.WithValue(ctx, callerKey{}, &callerInfo{
@@ -314,7 +321,7 @@ func daemon(configFile, socketFlag string) {
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
 		},
-	}
+	})
 
 	grpcLn, webLn, adminLn, err := listeners(cfg)
 	if err != nil {

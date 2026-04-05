@@ -9,3 +9,8 @@ plugins:
   - local: protoc-gen-connect-go
     out: ../internal/protocol/pb
     opt: paths=source_relative
+  - remote: buf.build/bufbuild/es:v2.11.0
+    out: ../cmd/mirumd/web/gen
+    opt:
+      - target=ts
+      - import_extension=js

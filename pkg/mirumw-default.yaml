@@ -3,12 +3,15 @@
 
 server: localhost:2026
 
-# Ed25519 key pair for worker authentication.
+# Ed25519 private key for worker authentication (PEM-encoded PKCS8).
 # Generate with:
 #   openssl genpkey -algorithm Ed25519 -out /etc/mirum/mirumw-default.key
-#   openssl pkey -in /etc/mirum/mirumw-default.key -pubout -out /etc/mirum/mirumw-default.pub
+#   chmod 600 /etc/mirum/mirumw-default.key
+#
+# Register the public key on the daemon:
+#   PUBKEY=$(openssl pkey -in /etc/mirum/mirumw-default.key -pubout -outform der | base64 -w0)
+#   mirumd --socket /run/mirumd/admin.sock worker add --pubkey "$PUBKEY"
 key_file: /etc/mirum/mirumw-default.key
-pub_key_file: /etc/mirum/mirumw-default.pub
 
 # Custom CA certificate for self-signed/dev TLS.
 # Leave empty to use system trust store.

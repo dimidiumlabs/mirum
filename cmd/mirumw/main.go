@@ -43,12 +43,17 @@ func main() {
 		}
 
 		slog.Info("connected", "server", cfg.Server)
-		backoff.Reset()
 
 		if err := c.work(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("work loop failed", "err", err)
+			c.close()
+			if !backoff.Wait(ctx) {
+				break
+			}
+			continue
 		}
 
+		backoff.Reset()
 		c.close()
 	}
 

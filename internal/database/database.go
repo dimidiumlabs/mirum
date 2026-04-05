@@ -172,13 +172,28 @@ func (db *DB) Migrate(ctx context.Context) error {
 		ALTER TABLE users FORCE ROW LEVEL SECURITY;
 
 		CREATE POLICY superuser ON users FOR ALL USING (app_issuper());
-		CREATE POLICY user_select ON users FOR SELECT USING (id = app_user_id());
+
+		-- SELECT is split into base case (own row) and extended case (users
+		-- who share an org membership with the caller). The base case is a
+		-- pure predicate — it lets the extended subquery resolve
+		-- app_user_id()'s own memberships without recursion.
+		CREATE POLICY user_select_self ON users FOR SELECT
+			USING (id = app_user_id());
+		CREATE POLICY user_select_shared_org ON users FOR SELECT
+			USING (EXISTS (
+				SELECT 1 FROM org_members target
+				JOIN org_members mine ON mine.org_id = target.org_id
+				WHERE target.user_id = users.id
+				  AND mine.user_id = app_user_id()
+			));
+
 		CREATE POLICY user_update ON users FOR UPDATE USING (id = app_user_id());
 		CREATE POLICY user_delete ON users FOR DELETE USING (id = app_user_id());
 		CREATE POLICY user_insert ON users FOR INSERT WITH CHECK (app_issuper());
 	`, `
 		DROP POLICY superuser ON users;
-		DROP POLICY user_select ON users;
+		DROP POLICY user_select_self ON users;
+		DROP POLICY user_select_shared_org ON users;
 		DROP POLICY user_insert ON users;
 		DROP POLICY user_update ON users;
 		DROP POLICY user_delete ON users;
@@ -223,7 +238,18 @@ func (db *DB) Migrate(ctx context.Context) error {
 		ALTER TABLE org_members FORCE ROW LEVEL SECURITY;
 
 		CREATE POLICY superuser ON org_members FOR ALL USING (app_issuper());
-		CREATE POLICY select_member ON org_members FOR SELECT USING (has_org_role(org_id, '{owner,admin,member}'));
+
+		-- SELECT is split into two permissive policies. The base case
+		-- (own membership rows) is a pure column predicate with no function
+		-- call, which is enough for has_org_role's inner query to succeed —
+		-- has_org_role always filters by user_id = app_user_id(). Without
+		-- this split, the admin-scoped policy calls has_org_role which
+		-- queries org_members which calls has_org_role → stack overflow.
+		CREATE POLICY select_own_member ON org_members FOR SELECT
+			USING (user_id = app_user_id());
+		CREATE POLICY select_org_member ON org_members FOR SELECT
+			USING (has_org_role(org_id, '{owner,admin,member}'));
+
 		CREATE POLICY insert_member ON org_members FOR INSERT WITH CHECK (
 			has_org_role(org_id, '{owner,admin}')
 			OR (
@@ -236,7 +262,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 		CREATE POLICY delete_member ON org_members FOR DELETE USING (has_org_role(org_id, '{owner,admin}'));
 	`, `
 		DROP POLICY superuser ON org_members;
-		DROP POLICY select_member ON org_members;
+		DROP POLICY select_own_member ON org_members;
+		DROP POLICY select_org_member ON org_members;
 		DROP POLICY insert_member ON org_members;
 		DROP POLICY update_member ON org_members;
 		DROP POLICY delete_member ON org_members;

@@ -3,41 +3,81 @@
 
 version: "3"
 
+output: prefixed
+
 vars:
   BUILD_DIR: build
   DIST_DIR: build/dist
   ARCHES: amd64 arm64 riscv64 ppc64le
+  DEV_DB: mirum-local-dev
 
 env:
   GOEXPERIMENT: runtimesecret
 
 tasks:
-  proto:
-    desc: Generate ConnectRPC code from proto files
-    sources:
-      - proto/*.proto
-    generates:
-      - internal/protocol/pb/**/*.go
-    cmds:
-      - rm -rf internal/protocol/pb
-      - cd proto && buf generate
-
   lint:
     desc: Run static checks
     deps: [proto]
     cmds:
       - go vet ./...
       - gofmt -l . | grep . && exit 1 || true
-
-  test:
-    desc: Run all tests
-    deps: [proto]
+  proto:
+    desc: Generate ConnectRPC code from proto files
+    sources:
+      - proto/*.proto
+      - proto/buf.gen.yaml
+      - proto/buf.yaml
+    generates:
+      - internal/protocol/pb/**/*.go
+      - cmd/mirumd/web/gen/**/*.ts
     cmds:
-      - go test -race -count=1 ./...
+      - rm -rf internal/protocol/pb cmd/mirumd/web/gen
+      - cd proto && buf generate
+      # admin_pb.ts imports file_buf_validate_validate from buf/validate/validate_pb.js.
+      # buf.validate carries only server-side field annotations that the browser
+      # never decodes, so replace the 200+ KB generated schema with an empty
+      # descriptor stub that satisfies the GenFile type.
+      - mkdir -p cmd/mirumd/web/gen/buf/validate
+      - |
+        cat > cmd/mirumd/web/gen/buf/validate/validate_pb.ts <<'EOF'
+        // Stub: see Taskfile.yml proto task. buf.validate is server-only.
+        import { fileDesc, type GenFile } from "@bufbuild/protobuf/codegenv2"
+        export const file_buf_validate_validate: GenFile = /*@__PURE__*/ fileDesc("")
+        EOF
+
+  web:install:
+    desc: Install frontend dependencies
+    dir: cmd/mirumd/web
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
+    cmds:
+      - npm ci
+
+  web:build:
+    desc: Build the frontend into cmd/mirumd/static
+    dir: cmd/mirumd/web
+    deps: [web:install, proto]
+    sources:
+      - api/**/*
+      - gen/**/*
+      - lib/**/*
+      - pages/**/*
+      - components/**/*
+      - index.css
+      - vite.config.ts
+      - tsconfig.json
+      - tsconfig.app.json
+    generates:
+      - ../static/**/*
+    cmds:
+      - npm run build
 
   build:
     desc: "Build binaries (override GOOS/GOARCH for cross-compilation)"
-    deps: [proto]
+    deps: [proto, web:build]
     vars:
       GOOS: { sh: "echo ${GOOS:-$(go env GOOS)}" }
       GOARCH: { sh: "echo ${GOARCH:-$(go env GOARCH)}" }
@@ -52,8 +92,39 @@ tasks:
       - cp {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumd
       - cp {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumw
 
-  dev:
-    desc: Generate dev TLS cert and worker key
+  test:
+    desc: Run all tests
+    deps: [build, web:size]
+    cmds:
+      - go test -race -count=1 ./...
+
+  web:size:
+    desc: Check frontend bundle size budgets
+    dir: cmd/mirumd/web
+    deps: [web:build]
+    sources:
+      - ../static/assets/*
+      - package.json
+    cmds:
+      - npm run size
+
+  web:dev:
+    desc: Run Vite dev server (use with `go run -tags dev ./cmd/mirumd`)
+    dir: cmd/mirumd/web
+    deps: [web:install, proto]
+    prefix: vite
+    env:
+      NO_COLOR: "1"
+      CI: "true"
+    cmds:
+      - npm run dev
+
+  devenv:keys:
+    desc: Generate dev TLS cert and worker key pair
+    status:
+      - test -f dev/server.crt
+      - test -f dev/worker.key
+      - test -f dev/worker.pub
     cmds:
       - mkdir -p dev
       - >-
@@ -65,6 +136,65 @@ tasks:
       - >-
         test -f dev/worker.key ||
         openssl genpkey -algorithm ed25519 -out dev/worker.key
+      - >-
+        test -f dev/worker.pub ||
+        openssl pkey -in dev/worker.key -pubout -out dev/worker.pub
+
+  devenv:config:
+    desc: Write dev/mirumd.yaml if missing
+    status:
+      - test -f dev/mirumd.yaml
+    cmds:
+      - mkdir -p dev
+      - |
+        cat > dev/mirumd.yaml <<EOF
+        web_addr: ":3000"
+        grpc_addr: ":2026"
+        admin_socket: "/tmp/mirum-admin.sock"
+        database_uri: "postgres://{{.DEV_DB}}:{{.DEV_DB}}@localhost:5432/{{.DEV_DB}}?sslmode=disable"
+        pepper: "dev-pepper"
+        webhook_secret: "dev-secret"
+        grpc_tls:
+          cert: "dev/server.crt"
+          key: "dev/server.key"
+        EOF
+
+  devenv:db:
+    desc: Create the dev postgres role and database (idempotent, needs sudo)
+    status:
+      - PGPASSWORD={{.DEV_DB}} psql -h localhost -U {{.DEV_DB}} -d {{.DEV_DB}} -c 'SELECT 1' >/dev/null 2>&1
+    cmds:
+      - |
+        sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{.DEV_DB}}'" | grep -q 1 ||
+          sudo -u postgres psql -c "CREATE ROLE \"{{.DEV_DB}}\" LOGIN PASSWORD '{{.DEV_DB}}'"
+      - |
+        sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{.DEV_DB}}'" | grep -q 1 ||
+          sudo -u postgres psql -c "CREATE DATABASE \"{{.DEV_DB}}\" OWNER \"{{.DEV_DB}}\""
+
+  devenv:
+    desc: Provision a full local dev environment (keys, config, database)
+    deps: [devenv:keys, devenv:config, devenv:db]
+
+  run:
+    desc: Build and run mirumd against the dev environment
+    deps: [build, devenv]
+    cmds:
+      - "{{.BUILD_DIR}}/mirumd daemon --config dev/mirumd.yaml"
+
+  dev:
+    desc: Run Vite dev server and mirumd together (HMR-enabled)
+    deps: [web:dev, dev:server]
+
+  dev:server:
+    desc: Build mirumd with -tags dev and run it against the dev environment
+    deps: [proto, devenv]
+    prefix: mirumd
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -tags dev -o {{.BUILD_DIR}}/mirumd ./cmd/mirumd
+      - "{{.BUILD_DIR}}/mirumd daemon --config dev/mirumd.yaml"
 
   package:
     desc: Build deb/rpm packages for all architectures

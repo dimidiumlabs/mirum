@@ -66,8 +66,9 @@ type User struct {
 
 // Session holds info about an authenticated session.
 type Session struct {
-	UserID uuid.UUID
-	Email  string
+	UserID    uuid.UUID
+	Email     string
+	Superuser bool
 }
 
 // hashToken returns the hex-encoded SHA-256 of a session token.
@@ -405,11 +406,11 @@ func (db *DB) UserGetSession(ctx context.Context, actor uuid.UUID, token string)
 	var expiresAt time.Time
 
 	if err := tx.QueryRow(ctx,
-		`SELECT s.user_id, u.email, s.expires_at
+		`SELECT s.user_id, u.email, u.superuser, s.expires_at
 		 FROM sessions s JOIN users u ON u.id = s.user_id
 		 WHERE s.token = $1 AND s.expires_at > now() AND u.deleted_at IS NULL`,
 		h,
-	).Scan(&s.UserID, &s.Email, &expiresAt); err != nil {
+	).Scan(&s.UserID, &s.Email, &s.Superuser, &expiresAt); err != nil {
 		return nil, err
 	}
 

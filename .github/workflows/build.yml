@@ -41,12 +41,6 @@ jobs:
         with:
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-  
-      - name: Lint
-        run: task lint
-
-      - name: Test
-        run: task test
 
       - name: Determine version
         id: version
@@ -71,6 +65,11 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           NFPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
   
+      - name: Lint
+        run: task lint
+
+      - name: Test
+        run: task test
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
