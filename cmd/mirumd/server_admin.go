@@ -11,21 +11,18 @@ import (
 
 	"connectrpc.com/connect"
 	"connectrpc.com/validate"
-	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/protocol/pb"
 	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
 )
 
-// NewAdminHandler creates the ConnectRPC handler with validation and auth.
+// NewAdminHandler creates the ConnectRPC handler with validation.
+// Authorization is handled inside DB methods, not by an interceptor.
 func NewAdminHandler(srv *server) (string, http.Handler) {
 	as := &adminService{srv: srv}
-	auth := &ApiAuthInterceptor{srv: srv}
-
 	return pbconnect.NewAdminHandler(as,
-		connect.WithInterceptors(validate.NewInterceptor(), auth),
+		connect.WithInterceptors(validate.NewInterceptor()),
 	)
 }
 
@@ -52,19 +49,21 @@ var errSpecs = []struct {
 	code   connect.Code
 	reason pb.ErrorReason
 }{
-	{database.ErrUserNotFound, connect.CodeNotFound, pb.ErrorReason_ERROR_REASON_USER_NOT_FOUND},
-	{database.ErrOrgNotFound, connect.CodeNotFound, pb.ErrorReason_ERROR_REASON_ORG_NOT_FOUND},
-	{database.ErrWorkerNotFound, connect.CodeNotFound, pb.ErrorReason_ERROR_REASON_WORKER_NOT_FOUND},
-	{database.ErrNotMember, connect.CodeNotFound, pb.ErrorReason_ERROR_REASON_MEMBER_NOT_FOUND},
-	{database.ErrEmailTaken, connect.CodeAlreadyExists, pb.ErrorReason_ERROR_REASON_EMAIL_TAKEN},
-	{database.ErrSlugTaken, connect.CodeAlreadyExists, pb.ErrorReason_ERROR_REASON_SLUG_TAKEN},
-	{database.ErrAlreadyMember, connect.CodeAlreadyExists, pb.ErrorReason_ERROR_REASON_ALREADY_MEMBER},
-	{database.ErrLastOwner, connect.CodeFailedPrecondition, pb.ErrorReason_ERROR_REASON_LAST_OWNER},
-	{database.ErrSoleOwner, connect.CodeFailedPrecondition, pb.ErrorReason_ERROR_REASON_SOLE_OWNER},
-	{database.ErrInvalidSlug, connect.CodeInvalidArgument, pb.ErrorReason_ERROR_REASON_INVALID_SLUG},
-	{database.ErrInvalidRole, connect.CodeInvalidArgument, pb.ErrorReason_ERROR_REASON_INVALID_ROLE},
-	{database.ErrReservedEmail, connect.CodeInvalidArgument, pb.ErrorReason_ERROR_REASON_RESERVED_EMAIL},
-	{database.ErrFilterNotImplemented, connect.CodeUnimplemented, pb.ErrorReason_ERROR_REASON_UNIMPLEMENTED},
+	{ErrUserNotFound, connect.CodeNotFound, pb.ErrorReason_ERROR_REASON_USER_NOT_FOUND},
+	{ErrOrgNotFound, connect.CodeNotFound, pb.ErrorReason_ERROR_REASON_ORG_NOT_FOUND},
+	{ErrWorkerNotFound, connect.CodeNotFound, pb.ErrorReason_ERROR_REASON_WORKER_NOT_FOUND},
+	{ErrNotMember, connect.CodeNotFound, pb.ErrorReason_ERROR_REASON_MEMBER_NOT_FOUND},
+	{ErrEmailTaken, connect.CodeAlreadyExists, pb.ErrorReason_ERROR_REASON_EMAIL_TAKEN},
+	{ErrSlugTaken, connect.CodeAlreadyExists, pb.ErrorReason_ERROR_REASON_SLUG_TAKEN},
+	{ErrAlreadyMember, connect.CodeAlreadyExists, pb.ErrorReason_ERROR_REASON_ALREADY_MEMBER},
+	{ErrLastOwner, connect.CodeFailedPrecondition, pb.ErrorReason_ERROR_REASON_LAST_OWNER},
+	{ErrSoleOwner, connect.CodeFailedPrecondition, pb.ErrorReason_ERROR_REASON_SOLE_OWNER},
+	{ErrInvalidSlug, connect.CodeInvalidArgument, pb.ErrorReason_ERROR_REASON_INVALID_SLUG},
+	{ErrInvalidRole, connect.CodeInvalidArgument, pb.ErrorReason_ERROR_REASON_INVALID_ROLE},
+	{ErrReservedEmail, connect.CodeInvalidArgument, pb.ErrorReason_ERROR_REASON_RESERVED_EMAIL},
+	{ErrPermissionDenied, connect.CodePermissionDenied, pb.ErrorReason_ERROR_REASON_PERMISSION_DENIED},
+	{ErrUnauthenticated, connect.CodeUnauthenticated, pb.ErrorReason_ERROR_REASON_UNAUTHENTICATED},
+	{ErrNotImplemented, connect.CodeUnimplemented, pb.ErrorReason_ERROR_REASON_UNIMPLEMENTED},
 }
 
 func mapErr(err error) error {
@@ -82,25 +81,33 @@ func mapErr(err error) error {
 
 // --- Ref converters ---
 
-func userRef(r *pb.UserRef) database.UserRef {
+func userRef(r *pb.UserRef) (UserRef, error) {
 	switch v := r.GetRef().(type) {
 	case *pb.UserRef_Id:
-		return database.UserByID(uuid.UUID(v.Id))
+		id, err := IDFromBytes[UserKind](v.Id)
+		if err != nil {
+			return UserRef{}, err
+		}
+		return UserByID(id), nil
 	case *pb.UserRef_Email:
-		return database.UserByEmail(v.Email)
+		return UserByEmail(v.Email), nil
 	default:
-		return database.UserByID(uuid.Nil)
+		return UserRef{}, nil
 	}
 }
 
-func orgRef(r *pb.OrgRef) database.OrgRef {
+func orgRef(r *pb.OrgRef) (OrgRef, error) {
 	switch v := r.GetRef().(type) {
 	case *pb.OrgRef_Id:
-		return database.OrgByID(uuid.UUID(v.Id))
+		id, err := IDFromBytes[OrgKind](v.Id)
+		if err != nil {
+			return OrgRef{}, err
+		}
+		return OrgByID(id), nil
 	case *pb.OrgRef_Slug:
-		return database.OrgBySlug(v.Slug)
+		return OrgBySlug(v.Slug), nil
 	default:
-		return database.OrgByID(uuid.Nil)
+		return OrgRef{}, nil
 	}
 }
 
@@ -125,7 +132,7 @@ const (
 	maxPageSize     = 200
 )
 
-func pageParams(p *pb.PageRequest) (cursor uuid.UUID, limit int) {
+func pageParams[K IDKind](p *pb.PageRequest) (cursor ID[K], limit int, err error) {
 	limit = defaultPageSize
 	if p != nil {
 		if p.PageSize > 0 && int(p.PageSize) < maxPageSize {
@@ -134,48 +141,51 @@ func pageParams(p *pb.PageRequest) (cursor uuid.UUID, limit int) {
 			limit = maxPageSize
 		}
 		if len(p.Cursor) == 16 {
-			cursor = uuid.UUID(p.Cursor)
+			cursor, err = IDFromBytes[K](p.Cursor)
+			if err != nil {
+				return
+			}
 		}
 	}
 	return
 }
 
-func pageResponse(items int, limit int, lastID uuid.UUID, total int) *pb.PageResponse {
+func pageResponse[K IDKind](items int, limit int, lastID ID[K], total int) *pb.PageResponse {
 	resp := &pb.PageResponse{TotalCount: int32(total)}
 	if items == limit {
-		resp.NextCursor = lastID[:]
+		resp.NextCursor = lastID.Bytes()
 	}
 	return resp
 }
 
 // --- Proto converters ---
 
-func userToProto(u database.User) *pb.User {
+func userToProto(u User) *pb.User {
 	return &pb.User{
-		Id: u.ID[:], Email: u.Email, CreatedAt: timestamppb.New(u.CreatedAt),
+		Id: u.ID.Bytes(), Email: u.Email, CreatedAt: timestamppb.New(u.CreatedAt),
 	}
 }
 
-func orgToProto(o database.Organization) *pb.Org {
+func orgToProto(o Organization) *pb.Org {
 	return &pb.Org{
-		Id: o.ID[:], Name: o.Name, Slug: o.Slug,
+		Id: o.ID.Bytes(), Name: o.Name, Slug: o.Slug,
 		Public: o.Public, CreatedAt: timestamppb.New(o.CreatedAt),
 	}
 }
 
-func memberToProto(m database.OrgMember) *pb.OrgMemberInfo {
+func memberToProto(m OrgMember) *pb.OrgMemberInfo {
 	return &pb.OrgMemberInfo{
 		User: userToProto(m.User), Role: roleToProto[m.Role],
 		JoinedAt: timestamppb.New(m.JoinedAt),
 	}
 }
 
-func workerToProto(w database.Worker) *pb.Worker {
+func workerToProto(w Worker) *pb.Worker {
 	pw := &pb.Worker{
-		Id: w.ID[:], PublicKey: w.PublicKey, CreatedAt: timestamppb.New(w.CreatedAt),
+		Id: w.ID.Bytes(), PublicKey: w.PublicKey, CreatedAt: timestamppb.New(w.CreatedAt),
 	}
 	if w.OrgID != nil {
-		pw.OrgId = w.OrgID[:]
+		pw.OrgId = w.OrgID.Bytes()
 	}
 	return pw
 }
@@ -187,11 +197,15 @@ func (a *adminService) UserCreate(ctx context.Context, req *connect.Request[pb.U
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	return connect.NewResponse(&pb.UserCreateResponse{Id: id[:]}), nil
+	return connect.NewResponse(&pb.UserCreateResponse{Id: id.Bytes()}), nil
 }
 
 func (a *adminService) UserGet(ctx context.Context, req *connect.Request[pb.UserGetRequest]) (*connect.Response[pb.UserGetResponse], error) {
-	u, err := a.srv.db.GetUser(ctx, ActorFromContext(ctx), userRef(req.Msg.User))
+	ref, err := userRef(req.Msg.User)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	u, err := a.srv.db.UserGet(ctx, ActorFromContext(ctx), ref)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -199,13 +213,16 @@ func (a *adminService) UserGet(ctx context.Context, req *connect.Request[pb.User
 }
 
 func (a *adminService) UserList(ctx context.Context, req *connect.Request[pb.UserListRequest]) (*connect.Response[pb.UserListResponse], error) {
-	cursor, limit := pageParams(req.Msg.Page)
+	cursor, limit, err := pageParams[UserKind](req.Msg.Page)
+	if err != nil {
+		return nil, mapErr(err)
+	}
 	filter := ""
 	if req.Msg.Filter != nil {
 		filter = *req.Msg.Filter
 	}
 
-	users, total, err := a.srv.db.ListUsers(ctx, ActorFromContext(ctx), cursor, limit, filter)
+	users, total, err := a.srv.db.UserList(ctx, ActorFromContext(ctx), cursor, limit, filter)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -215,7 +232,7 @@ func (a *adminService) UserList(ctx context.Context, req *connect.Request[pb.Use
 		out[i] = userToProto(users[i])
 	}
 
-	var lastID uuid.UUID
+	var lastID UserID
 	if len(users) > 0 {
 		lastID = users[len(users)-1].ID
 	}
@@ -227,14 +244,22 @@ func (a *adminService) UserList(ctx context.Context, req *connect.Request[pb.Use
 }
 
 func (a *adminService) UserUpdate(ctx context.Context, req *connect.Request[pb.UserUpdateRequest]) (*connect.Response[pb.UserUpdateResponse], error) {
-	if err := a.srv.db.UserUpdate(ctx, ActorFromContext(ctx), userRef(req.Msg.User), req.Msg.Email, req.Msg.Password, []byte(a.srv.cfg.Pepper)); err != nil {
+	ref, err := userRef(req.Msg.User)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if err := a.srv.db.UserUpdate(ctx, ActorFromContext(ctx), ref, req.Msg.Email, req.Msg.Password, []byte(a.srv.cfg.Pepper)); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.UserUpdateResponse{}), nil
 }
 
 func (a *adminService) UserDelete(ctx context.Context, req *connect.Request[pb.UserDeleteRequest]) (*connect.Response[pb.UserDeleteResponse], error) {
-	if err := a.srv.db.UserDelete(ctx, ActorFromContext(ctx), userRef(req.Msg.User)); err != nil {
+	ref, err := userRef(req.Msg.User)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if err := a.srv.db.UserDelete(ctx, ActorFromContext(ctx), ref); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.UserDeleteResponse{}), nil
@@ -243,19 +268,27 @@ func (a *adminService) UserDelete(ctx context.Context, req *connect.Request[pb.U
 // --- Org handlers ---
 
 func (a *adminService) OrgCreate(ctx context.Context, req *connect.Request[pb.OrgCreateRequest]) (*connect.Response[pb.OrgCreateResponse], error) {
-	slug, err := database.ValidateSlug(req.Msg.Slug)
+	slug, err := ValidateSlug(req.Msg.Slug)
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	id, err := a.srv.db.CreateOrganization(ctx, ActorFromContext(ctx), req.Msg.Name, slug, req.Msg.Public, userRef(req.Msg.Owner))
+	owner, err := userRef(req.Msg.Owner)
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	return connect.NewResponse(&pb.OrgCreateResponse{Id: id[:]}), nil
+	id, err := a.srv.db.OrgCreate(ctx, ActorFromContext(ctx), req.Msg.Name, slug, req.Msg.Public, owner)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return connect.NewResponse(&pb.OrgCreateResponse{Id: id.Bytes()}), nil
 }
 
 func (a *adminService) OrgGet(ctx context.Context, req *connect.Request[pb.OrgGetRequest]) (*connect.Response[pb.OrgGetResponse], error) {
-	o, err := a.srv.db.GetOrg(ctx, ActorFromContext(ctx), orgRef(req.Msg.Org))
+	ref, err := orgRef(req.Msg.Org)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	o, err := a.srv.db.OrgGet(ctx, ActorFromContext(ctx), ref)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -263,13 +296,16 @@ func (a *adminService) OrgGet(ctx context.Context, req *connect.Request[pb.OrgGe
 }
 
 func (a *adminService) OrgList(ctx context.Context, req *connect.Request[pb.OrgListRequest]) (*connect.Response[pb.OrgListResponse], error) {
-	cursor, limit := pageParams(req.Msg.Page)
+	cursor, limit, err := pageParams[OrgKind](req.Msg.Page)
+	if err != nil {
+		return nil, mapErr(err)
+	}
 	filter := ""
 	if req.Msg.Filter != nil {
 		filter = *req.Msg.Filter
 	}
 
-	orgs, total, err := a.srv.db.ListOrganizations(ctx, ActorFromContext(ctx), cursor, limit, filter)
+	orgs, total, err := a.srv.db.OrgList(ctx, ActorFromContext(ctx), cursor, limit, filter)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -279,7 +315,7 @@ func (a *adminService) OrgList(ctx context.Context, req *connect.Request[pb.OrgL
 		out[i] = orgToProto(orgs[i])
 	}
 
-	var lastID uuid.UUID
+	var lastID OrgID
 	if len(orgs) > 0 {
 		lastID = orgs[len(orgs)-1].ID
 	}
@@ -293,20 +329,28 @@ func (a *adminService) OrgList(ctx context.Context, req *connect.Request[pb.OrgL
 func (a *adminService) OrgUpdate(ctx context.Context, req *connect.Request[pb.OrgUpdateRequest]) (*connect.Response[pb.OrgUpdateResponse], error) {
 	var slug *string
 	if req.Msg.Slug != nil {
-		s, err := database.ValidateSlug(*req.Msg.Slug)
+		s, err := ValidateSlug(*req.Msg.Slug)
 		if err != nil {
 			return nil, mapErr(err)
 		}
 		slug = &s
 	}
-	if err := a.srv.db.UpdateOrganization(ctx, ActorFromContext(ctx), orgRef(req.Msg.Org), req.Msg.Name, slug, req.Msg.Public); err != nil {
+	ref, err := orgRef(req.Msg.Org)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if err := a.srv.db.OrgUpdate(ctx, ActorFromContext(ctx), ref, req.Msg.Name, slug, req.Msg.Public); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.OrgUpdateResponse{}), nil
 }
 
 func (a *adminService) OrgDelete(ctx context.Context, req *connect.Request[pb.OrgDeleteRequest]) (*connect.Response[pb.OrgDeleteResponse], error) {
-	if err := a.srv.db.DeleteOrganization(ctx, ActorFromContext(ctx), orgRef(req.Msg.Org)); err != nil {
+	ref, err := orgRef(req.Msg.Org)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if err := a.srv.db.OrgDelete(ctx, ActorFromContext(ctx), ref); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.OrgDeleteResponse{}), nil
@@ -319,14 +363,30 @@ func (a *adminService) OrgMemberAdd(ctx context.Context, req *connect.Request[pb
 	if !ok {
 		return nil, newAPIError(connect.CodeInvalidArgument, pb.ErrorReason_ERROR_REASON_INVALID_ROLE, nil)
 	}
-	if err := a.srv.db.AddOrgMember(ctx, ActorFromContext(ctx), orgRef(req.Msg.Org), userRef(req.Msg.User), role); err != nil {
+	org, err := orgRef(req.Msg.Org)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	user, err := userRef(req.Msg.User)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if err := a.srv.db.OrgMemberAdd(ctx, ActorFromContext(ctx), org, user, role); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.OrgMemberAddResponse{}), nil
 }
 
 func (a *adminService) OrgMemberGet(ctx context.Context, req *connect.Request[pb.OrgMemberGetRequest]) (*connect.Response[pb.OrgMemberGetResponse], error) {
-	m, err := a.srv.db.GetOrgMember(ctx, ActorFromContext(ctx), orgRef(req.Msg.Org), userRef(req.Msg.User))
+	org, err := orgRef(req.Msg.Org)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	user, err := userRef(req.Msg.User)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	m, err := a.srv.db.OrgMemberGet(ctx, ActorFromContext(ctx), org, user)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -334,13 +394,20 @@ func (a *adminService) OrgMemberGet(ctx context.Context, req *connect.Request[pb
 }
 
 func (a *adminService) OrgMemberList(ctx context.Context, req *connect.Request[pb.OrgMemberListRequest]) (*connect.Response[pb.OrgMemberListResponse], error) {
-	cursor, limit := pageParams(req.Msg.Page)
+	cursor, limit, err := pageParams[UserKind](req.Msg.Page)
+	if err != nil {
+		return nil, mapErr(err)
+	}
 	filter := ""
 	if req.Msg.Filter != nil {
 		filter = *req.Msg.Filter
 	}
+	org, err := orgRef(req.Msg.Org)
+	if err != nil {
+		return nil, mapErr(err)
+	}
 
-	members, total, err := a.srv.db.ListOrgMembers(ctx, ActorFromContext(ctx), orgRef(req.Msg.Org), cursor, limit, filter)
+	members, total, err := a.srv.db.OrgMembersList(ctx, ActorFromContext(ctx), org, cursor, limit, filter)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -350,7 +417,7 @@ func (a *adminService) OrgMemberList(ctx context.Context, req *connect.Request[p
 		out[i] = memberToProto(members[i])
 	}
 
-	var lastID uuid.UUID
+	var lastID UserID
 	if len(members) > 0 {
 		lastID = members[len(members)-1].User.ID
 	}
@@ -366,14 +433,30 @@ func (a *adminService) OrgMemberUpdate(ctx context.Context, req *connect.Request
 	if !ok {
 		return nil, newAPIError(connect.CodeInvalidArgument, pb.ErrorReason_ERROR_REASON_INVALID_ROLE, nil)
 	}
-	if err := a.srv.db.UpdateOrgMemberRole(ctx, ActorFromContext(ctx), orgRef(req.Msg.Org), userRef(req.Msg.User), role); err != nil {
+	org, err := orgRef(req.Msg.Org)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	user, err := userRef(req.Msg.User)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if err := a.srv.db.OrgMemberUpdateRole(ctx, ActorFromContext(ctx), org, user, role); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.OrgMemberUpdateResponse{}), nil
 }
 
 func (a *adminService) OrgMemberRemove(ctx context.Context, req *connect.Request[pb.OrgMemberRemoveRequest]) (*connect.Response[pb.OrgMemberRemoveResponse], error) {
-	if err := a.srv.db.RemoveOrgMember(ctx, ActorFromContext(ctx), orgRef(req.Msg.Org), userRef(req.Msg.User)); err != nil {
+	org, err := orgRef(req.Msg.Org)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	user, err := userRef(req.Msg.User)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if err := a.srv.db.OrgMemberRemove(ctx, ActorFromContext(ctx), org, user); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.OrgMemberRemoveResponse{}), nil
@@ -382,20 +465,27 @@ func (a *adminService) OrgMemberRemove(ctx context.Context, req *connect.Request
 // --- Worker handlers ---
 
 func (a *adminService) WorkerCreate(ctx context.Context, req *connect.Request[pb.WorkerCreateRequest]) (*connect.Response[pb.WorkerCreateResponse], error) {
-	var org *database.OrgRef
+	var org *OrgRef
 	if req.Msg.Org != nil {
-		r := orgRef(req.Msg.Org)
+		r, err := orgRef(req.Msg.Org)
+		if err != nil {
+			return nil, mapErr(err)
+		}
 		org = &r
 	}
-	id, err := a.srv.db.CreateWorker(ctx, ActorFromContext(ctx), req.Msg.PublicKey, org)
+	id, err := a.srv.db.WorkerCreate(ctx, ActorFromContext(ctx), req.Msg.PublicKey, org)
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	return connect.NewResponse(&pb.WorkerCreateResponse{Id: id[:]}), nil
+	return connect.NewResponse(&pb.WorkerCreateResponse{Id: id.Bytes()}), nil
 }
 
 func (a *adminService) WorkerGet(ctx context.Context, req *connect.Request[pb.WorkerGetRequest]) (*connect.Response[pb.WorkerGetResponse], error) {
-	w, err := a.srv.db.GetWorker(ctx, ActorFromContext(ctx), uuid.UUID(req.Msg.Id))
+	wid, err := IDFromBytes[WorkerKind](req.Msg.Id)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	w, err := a.srv.db.WorkerGet(ctx, ActorFromContext(ctx), wid)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -403,13 +493,16 @@ func (a *adminService) WorkerGet(ctx context.Context, req *connect.Request[pb.Wo
 }
 
 func (a *adminService) WorkerList(ctx context.Context, req *connect.Request[pb.WorkerListRequest]) (*connect.Response[pb.WorkerListResponse], error) {
-	cursor, limit := pageParams(req.Msg.Page)
+	cursor, limit, err := pageParams[WorkerKind](req.Msg.Page)
+	if err != nil {
+		return nil, mapErr(err)
+	}
 	filter := ""
 	if req.Msg.Filter != nil {
 		filter = *req.Msg.Filter
 	}
 
-	workers, total, err := a.srv.db.ListWorkers(ctx, ActorFromContext(ctx), cursor, limit, filter)
+	workers, total, err := a.srv.db.WorkerList(ctx, ActorFromContext(ctx), cursor, limit, filter)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -419,7 +512,7 @@ func (a *adminService) WorkerList(ctx context.Context, req *connect.Request[pb.W
 		out[i] = workerToProto(workers[i])
 	}
 
-	var lastID uuid.UUID
+	var lastID WorkerID
 	if len(workers) > 0 {
 		lastID = workers[len(workers)-1].ID
 	}
@@ -431,7 +524,11 @@ func (a *adminService) WorkerList(ctx context.Context, req *connect.Request[pb.W
 }
 
 func (a *adminService) WorkerDelete(ctx context.Context, req *connect.Request[pb.WorkerDeleteRequest]) (*connect.Response[pb.WorkerDeleteResponse], error) {
-	if err := a.srv.db.DeleteWorker(ctx, ActorFromContext(ctx), uuid.UUID(req.Msg.Id)); err != nil {
+	wid, err := IDFromBytes[WorkerKind](req.Msg.Id)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if err := a.srv.db.WorkerDelete(ctx, ActorFromContext(ctx), wid); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&pb.WorkerDeleteResponse{}), nil

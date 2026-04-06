@@ -22,7 +22,6 @@ import (
 	"github.com/go-chi/httprate"
 
 	"dimidiumlabs/mirum/internal/config"
-	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/forges"
 	"dimidiumlabs/mirum/internal/protocol/pb"
 )
@@ -126,18 +125,18 @@ type webHandler struct {
 }
 
 // ActorFromContext returns the authenticated actor, or AnonActor if none.
-func ActorFromContext(ctx context.Context) database.Actor {
-	if v, ok := ctx.Value(actorKey{}).(database.Actor); ok {
+func ActorFromContext(ctx context.Context) Actor {
+	if v, ok := ctx.Value(actorKey{}).(Actor); ok {
 		return v
 	}
-	return database.AnonActor()
+	return AnonActor()
 }
 
 // SessionMiddleware resolves the session cookie and puts the Actor in context.
 func (h *webHandler) SessionMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie(sessionCookie); err == nil {
-			if actor, err := h.srv.db.UserGetSession(r.Context(), database.SystemActor(), c.Value); err == nil {
+			if actor, err := h.srv.db.UserSessionGet(r.Context(), SystemActor(), c.Value); err == nil {
 				ctx := context.WithValue(r.Context(), actorKey{}, actor)
 				r = r.WithContext(ctx)
 			}
@@ -146,12 +145,12 @@ func (h *webHandler) SessionMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-type authedHandler func(w http.ResponseWriter, r *http.Request, actor database.Actor)
+type authedHandler func(w http.ResponseWriter, r *http.Request, actor Actor)
 
 func authonly(next authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := ActorFromContext(r.Context())
-		if actor.Kind() == database.KindAnon {
+		if actor.Kind() == KindAnon {
 			http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 			return
 		}
@@ -159,7 +158,7 @@ func authonly(next authedHandler) http.HandlerFunc {
 	}
 }
 
-func (h *webHandler) index(w http.ResponseWriter, r *http.Request, actor database.Actor) {
+func (h *webHandler) index(w http.ResponseWriter, r *http.Request, actor Actor) {
 	h.assets.renderPage(w, "dashboard", http.StatusOK, map[string]any{
 		"user": map[string]string{"email": actor.Email()},
 		"csrf": csrfToken(w, r),
@@ -246,13 +245,13 @@ func (h *webHandler) login(w http.ResponseWriter, r *http.Request) {
 	email := r.FormValue("email")
 	password := r.FormValue("password")
 
-	userID, err := h.srv.db.UserVerifyPassword(r.Context(), database.SystemActor(), email, password, []byte(h.srv.cfg.Pepper))
+	userID, err := h.srv.db.UserVerifyPassword(r.Context(), SystemActor(), email, password, []byte(h.srv.cfg.Pepper))
 	if err != nil {
 		h.renderLogin(w, r, http.StatusUnauthorized, pb.ErrorReason_ERROR_REASON_INVALID_CREDENTIALS)
 		return
 	}
 
-	token, err := h.srv.db.UserCreateSession(r.Context(), database.SystemActor(), userID)
+	token, err := h.srv.db.UserSessionCreate(r.Context(), SystemActor(), userID)
 	if err != nil {
 		slog.Error("create session failed", "err", err)
 		h.renderLogin(w, r, http.StatusInternalServerError, pb.ErrorReason_ERROR_REASON_INTERNAL)
@@ -279,7 +278,7 @@ func (h *webHandler) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if c, err := r.Cookie(sessionCookie); err == nil {
-		h.srv.db.UserDeleteSession(r.Context(), database.SystemActor(), c.Value)
+		h.srv.db.UserSessionDelete(r.Context(), SystemActor(), c.Value)
 	}
 	clearCookie(w, sessionCookie)
 	clearCookie(w, csrfCookie)

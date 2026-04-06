@@ -19,7 +19,6 @@ import (
 	"connectrpc.com/validate"
 
 	"dimidiumlabs/mirum/internal/config"
-	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/protocol"
 	"dimidiumlabs/mirum/internal/protocol/pb"
 	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
@@ -62,7 +61,7 @@ func NewGrpcServer(ctx context.Context, srv *server) *http.Server {
 					return errors.New("ed25519 certificate required")
 				}
 
-				if _, err := srv.db.LookupWorker(context.Background(), database.SystemActor(), pubKey); err != nil {
+				if _, err := srv.db.WorkerLookup(context.Background(), SystemActor(), pubKey); err != nil {
 					return fmt.Errorf("unknown worker: %w", err)
 				}
 

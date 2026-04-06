@@ -13,7 +13,6 @@ import (
 	"os"
 
 	"dimidiumlabs/mirum/internal/config"
-	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/forges"
 	"dimidiumlabs/mirum/internal/protocol/pb"
 	"dimidiumlabs/mirum/internal/protocol/pb/pbconnect"
@@ -82,7 +81,7 @@ func daemon(configFile, socketFlag string) error {
 	ctx, cancel := context.WithCancel(sup.WaitForStop(context.Background()))
 	defer cancel()
 
-	db, err := database.Open(ctx, cfg.DatabaseUri)
+	db, err := DatabaseOpen(ctx, cfg.DatabaseUri)
 	if err != nil {
 		slog.Error("couldn't open database", "err", err)
 		return err
@@ -115,7 +114,7 @@ func daemon(configFile, socketFlag string) error {
 	adminSrv := hardenServer(&http.Server{
 		Handler: adminMux,
 		ConnContext: func(ctx context.Context, _ net.Conn) context.Context {
-			return context.WithValue(ctx, actorKey{}, database.OperatorActor())
+			return context.WithValue(ctx, actorKey{}, OperatorActor())
 		},
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx

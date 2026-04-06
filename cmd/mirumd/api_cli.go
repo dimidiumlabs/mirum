@@ -19,7 +19,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"google.golang.org/protobuf/proto"
@@ -245,11 +244,11 @@ func registerMessageField(cmd *cobra.Command, fd protoreflect.FieldDescriptor, f
 func parseBytesFlag(fieldName, v string) ([]byte, error) {
 	switch {
 	case fieldName == "id" || strings.HasSuffix(fieldName, "_id"):
-		u, err := uuid.Parse(v)
+		id, err := ParseAnyID(v)
 		if err != nil {
-			return nil, fmt.Errorf("invalid uuid: %w", err)
+			return nil, fmt.Errorf("invalid id: %w", err)
 		}
-		return u[:], nil
+		return id[:], nil
 	case strings.Contains(fieldName, "key"):
 		der, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
@@ -419,9 +418,7 @@ func formatScalar(fd protoreflect.FieldDescriptor, v protoreflect.Value) string 
 
 func formatBytes(b []byte) string {
 	if len(b) == 16 {
-		if u, err := uuid.FromBytes(b); err == nil {
-			return u.String()
-		}
+		return FormatAnyID(b)
 	}
 	return base64.StdEncoding.EncodeToString(b)
 }

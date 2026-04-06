@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"dimidiumlabs/mirum/internal/config"
-	"dimidiumlabs/mirum/internal/database"
 	"dimidiumlabs/mirum/internal/forges"
 	"dimidiumlabs/mirum/internal/protocol/pb"
 )
@@ -20,7 +19,7 @@ import (
 // server holds the shared application state.
 type server struct {
 	cfg   *appConfig
-	db    *database.DB
+	db    *DB
 	forge forges.Forge
 
 	queue       chan *pb.Task
@@ -43,7 +42,7 @@ func (s *server) PurgeSessions(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			if err := s.db.PurgeExpiredSessions(ctx); err != nil {
+			if err := s.db.UserSessionPurgeExpired(ctx); err != nil {
 				slog.Error("purge sessions", "err", err)
 			}
 		case <-ctx.Done():
