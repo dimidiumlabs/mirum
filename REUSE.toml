@@ -9,6 +9,7 @@ path = [
   "go.sum",
   "VERSION",
   "CLA.md",
+  "CONCEPT.md",
   "README.md",
   "pkg/logo.svg",
   "pkg/dl/*",
