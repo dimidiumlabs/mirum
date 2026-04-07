@@ -2,23 +2,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { Button } from "@/components/ui/button"
+import * as m from "@/paraglide/messages.js"
 
 export type ErrorPageProps = {
   status: number
 }
 
-const copy: Record<number, { title: string; body: string }> = {
-  400: { title: "Bad request", body: "The request couldn't be processed." },
-  401: { title: "Not signed in", body: "Please sign in to continue." },
-  403: { title: "Forbidden", body: "You don't have permission to access this page." },
-  404: { title: "Not found", body: "The page you were looking for doesn't exist." },
-  405: { title: "Method not allowed", body: "That action isn't supported here." },
-  500: { title: "Something went wrong", body: "An internal error occurred. Please try again." },
-  503: { title: "Unavailable", body: "The server is temporarily unable to handle the request." },
+function getErrorText(status: number): { title: string; body: string } {
+  switch (status) {
+    case 400: return { title: m.error_400_title(), body: m.error_400_body() }
+    case 401: return { title: m.error_401_title(), body: m.error_401_body() }
+    case 403: return { title: m.error_403_title(), body: m.error_403_body() }
+    case 404: return { title: m.error_404_title(), body: m.error_404_body() }
+    case 405: return { title: m.error_405_title(), body: m.error_405_body() }
+    case 500: return { title: m.error_500_title(), body: m.error_500_body() }
+    case 503: return { title: m.error_503_title(), body: m.error_503_body() }
+    default:  return { title: m.error_label({ status: String(status) }), body: m.error_fallback_body() }
+  }
 }
 
 export function Page({ status }: ErrorPageProps) {
-  const text = copy[status] ?? { title: `Error ${status}`, body: "Something went wrong." }
+  const text = getErrorText(status)
 
   return (
     <main className="relative flex min-h-svh items-center justify-center overflow-hidden p-6">
@@ -30,7 +34,7 @@ export function Page({ status }: ErrorPageProps) {
       </p>
       <div className="relative w-full max-w-sm">
         <p className="text-xs font-medium uppercase tracking-wider text-foreground/60">
-          Error {status}
+          {m.error_label({ status: String(status) })}
         </p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">
           {text.title}
@@ -39,7 +43,7 @@ export function Page({ status }: ErrorPageProps) {
           {text.body}
         </p>
         <Button asChild variant="outline" size="sm" className="mt-6">
-          <a href="/">Back to home</a>
+          <a href="/">{m.error_back_to_home()}</a>
         </Button>
       </div>
     </main>

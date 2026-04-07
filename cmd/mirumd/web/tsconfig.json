@@ -12,6 +12,7 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "types": ["vite/client"],
+    "allowJs": true,
     "skipLibCheck": true,
 
     /* Bundler mode */

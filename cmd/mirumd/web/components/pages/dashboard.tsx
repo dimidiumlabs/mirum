@@ -7,6 +7,7 @@ import { formatError } from "@/lib/errors"
 import type { Org } from "@/gen/admin_pb"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import * as m from "@/paraglide/messages.js"
 
 export type DashboardProps = {
   user: { email: string }
@@ -33,24 +34,24 @@ export function Page({ user, csrf }: DashboardProps) {
   return (
     <div className="mx-auto max-w-3xl p-8 space-y-6">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Mirum</h1>
+        <h1 className="text-2xl font-semibold">{m.dashboard_title()}</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-muted-foreground">{user.email}</span>
           <form method="POST" action="/auth/logout">
             <input type="hidden" name="csrf" value={csrf} />
-            <Button type="submit" variant="outline" size="sm">Sign out</Button>
+            <Button type="submit" variant="outline" size="sm">{m.dashboard_sign_out()}</Button>
           </form>
         </div>
       </header>
 
       <Card>
         <CardHeader>
-          <CardTitle>Organizations</CardTitle>
+          <CardTitle>{m.dashboard_organizations()}</CardTitle>
         </CardHeader>
         <CardContent>
           {error && <p className="text-destructive">{error}</p>}
-          {orgs === null && !error && <p className="text-muted-foreground">Loading…</p>}
-          {orgs?.length === 0 && <p className="text-muted-foreground">No organizations yet.</p>}
+          {orgs === null && !error && <p className="text-muted-foreground">{m.dashboard_loading()}</p>}
+          {orgs?.length === 0 && <p className="text-muted-foreground">{m.dashboard_no_organizations()}</p>}
           {orgs && orgs.length > 0 && (
             <ul className="divide-y">
               {orgs.map((org) => (

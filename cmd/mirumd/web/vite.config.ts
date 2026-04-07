@@ -1,22 +1,30 @@
 // Copyright (c) 2026 Nikolay Govorov
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { readdirSync } from "node:fs"
-import { resolve, parse } from "node:path"
-import { defineConfig } from "vite"
+import { readdirSync } from "node:fs";
+import { resolve, parse } from "node:path";
+import { defineConfig } from "vite";
 
-import react from "@vitejs/plugin-react"
-import tailwindcss from "@tailwindcss/vite"
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { paraglideVitePlugin } from "@inlang/paraglide-js";
 
-const input = readdirSync(resolve(__dirname, "entries")).reduce((acc, file) => {
-  const {name} = parse(file);
-  acc[name] = resolve(__dirname, "entries", file)
-  return acc
-}, {} as Record<string, string>)
+const input = readdirSync(resolve(__dirname, "entries")).reduce(
+  (acc, file) => {
+    const { name } = parse(file);
+    acc[name] = resolve(__dirname, "entries", file);
+    return acc;
+  },
+  {} as Record<string, string>,
+);
 
 export default defineConfig({
   clearScreen: false,
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    paraglideVitePlugin({ project: "./project.inlang", outdir: "./paraglide" }),
+    react(),
+    tailwindcss(),
+  ],
   resolve: {
     alias: { "@": resolve(__dirname) },
   },
@@ -36,11 +44,14 @@ export default defineConfig({
         chunkFileNames: "assets/[name].[hash].js",
         assetFileNames: "assets/[name].[hash][extname]",
         manualChunks(id) {
-          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) {
-            return "vendor"
+          if (
+            id.includes("node_modules/react") ||
+            id.includes("node_modules/react-dom")
+          ) {
+            return "vendor";
           }
         },
       },
     },
   },
-})
+});

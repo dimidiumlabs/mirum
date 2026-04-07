@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/field";
 import { ErrorReason } from "@/gen/admin_pb";
 import { textForReason } from "@/lib/errors";
+import * as m from "@/paraglide/messages.js";
 
 export type LoginFormProps = {
   csrf: string;
@@ -33,13 +34,13 @@ export function Page({ csrf, errorReason }: LoginFormProps) {
           <div className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
             <GalleryVerticalEnd className="size-4" />
           </div>
-          Dimidium Labs Limited
+          {m.login_brand()}
         </div>
 
         <div className={"flex flex-col gap-6"}>
           <Card>
             <CardHeader className="text-center">
-              <CardTitle className="text-xl">Sign In to Mirum</CardTitle>
+              <CardTitle className="text-xl">{m.login_title()}</CardTitle>
             </CardHeader>
 
             <CardContent>
@@ -60,12 +61,12 @@ export function Page({ csrf, errorReason }: LoginFormProps) {
                   )}
 
                   <Field>
-                    <FieldLabel htmlFor="email">Email</FieldLabel>
+                    <FieldLabel htmlFor="email">{m.login_email_label()}</FieldLabel>
                     <Input
                       id="email"
                       name="email"
                       type="email"
-                      placeholder="hey@mirum.dev"
+                      placeholder={m.login_email_placeholder()}
                       required
                       autoFocus
                       onInput={dismissError}
@@ -73,7 +74,7 @@ export function Page({ csrf, errorReason }: LoginFormProps) {
                   </Field>
 
                   <Field>
-                    <FieldLabel htmlFor="password">Password</FieldLabel>
+                    <FieldLabel htmlFor="password">{m.login_password_label()}</FieldLabel>
                     <Input
                       id="password"
                       name="password"
@@ -85,10 +86,10 @@ export function Page({ csrf, errorReason }: LoginFormProps) {
                   </Field>
 
                   <Field>
-                    <Button type="submit">Login</Button>
+                    <Button type="submit">{m.login_submit()}</Button>
 
                     <FieldDescription className="text-center">
-                      Contact your administrator to sign up.
+                      {m.login_contact_admin()}
                     </FieldDescription>
                   </Field>
                 </FieldGroup>
@@ -97,8 +98,10 @@ export function Page({ csrf, errorReason }: LoginFormProps) {
           </Card>
 
           <FieldDescription className="px-6 text-center">
-            By clicking continue, you agree to our{" "}
-            <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a>.
+            {m.login_terms_prefix()}{" "}
+            <a href="#">{m.login_terms_of_service()}</a>{" "}
+            {m.login_terms_and()}{" "}
+            <a href="#">{m.login_privacy_policy()}</a>.
           </FieldDescription>
         </div>
       </div>

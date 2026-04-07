@@ -13,3 +13,4 @@ cmd/mirumd/web/node_modules
 
 /.devcontainer
 .DS_Store
+.vscode/

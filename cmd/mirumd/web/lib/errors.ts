@@ -3,6 +3,7 @@
 
 import { Code, ConnectError } from "@connectrpc/connect"
 import { ErrorInfoSchema, ErrorReason } from "@/gen/admin_pb"
+import * as m from "@/paraglide/messages.js"
 
 // errorReason extracts the ErrorInfo.reason attached by the server.
 // Returns null for transport failures or non-mirum responses.
@@ -26,59 +27,59 @@ export function formatError(err: unknown): string {
 export function textForReason(reason: ErrorReason): string {
   switch (reason) {
     case ErrorReason.USER_NOT_FOUND:
-      return "User not found."
+      return m.err_user_not_found()
     case ErrorReason.ORG_NOT_FOUND:
-      return "Organization not found."
+      return m.err_org_not_found()
     case ErrorReason.WORKER_NOT_FOUND:
-      return "Worker not found."
+      return m.err_worker_not_found()
     case ErrorReason.MEMBER_NOT_FOUND:
-      return "Member not found."
+      return m.err_member_not_found()
     case ErrorReason.EMAIL_TAKEN:
-      return "This email is already in use."
+      return m.err_email_taken()
     case ErrorReason.SLUG_TAKEN:
-      return "This slug is already taken."
+      return m.err_slug_taken()
     case ErrorReason.ALREADY_MEMBER:
-      return "Already a member of this organization."
+      return m.err_already_member()
     case ErrorReason.LAST_OWNER:
-      return "An organization must have at least one owner."
+      return m.err_last_owner()
     case ErrorReason.SOLE_OWNER:
-      return "This user is the sole owner of an organization. Transfer ownership first."
+      return m.err_sole_owner()
     case ErrorReason.INVALID_SLUG:
-      return "Invalid slug. Use lowercase letters, digits, and hyphens."
+      return m.err_invalid_slug()
     case ErrorReason.INVALID_ROLE:
-      return "Invalid role."
+      return m.err_invalid_role()
     case ErrorReason.RESERVED_EMAIL:
-      return "This email domain is reserved. Please use a different address."
+      return m.err_reserved_email()
     case ErrorReason.UNAUTHENTICATED:
-      return "Your session has expired. Please sign in again."
+      return m.err_unauthenticated()
     case ErrorReason.PERMISSION_DENIED:
-      return "You don't have permission to do that."
+      return m.err_permission_denied()
     case ErrorReason.INVALID_CREDENTIALS:
-      return "Wrong email or password. Please try again."
+      return m.err_invalid_credentials()
     case ErrorReason.INVALID_CSRF:
-      return "This form expired. Please try again."
+      return m.err_invalid_csrf()
     case ErrorReason.RATE_LIMITED:
-      return "Too many requests. Please slow down."
+      return m.err_rate_limited()
     case ErrorReason.UNAVAILABLE:
-      return "Service is temporarily unavailable. Please retry."
+      return m.err_unavailable()
     case ErrorReason.UNIMPLEMENTED:
-      return "This operation is not supported."
+      return m.err_unimplemented()
     case ErrorReason.INTERNAL:
     case ErrorReason.UNSPECIFIED:
     default:
-      return "Something went wrong. Please try again."
+      return m.err_internal()
   }
 }
 
 function textForCode(code: Code): string {
   switch (code) {
     case Code.Canceled:
-      return "Request canceled."
+      return m.err_canceled()
     case Code.DeadlineExceeded:
-      return "Request timed out."
+      return m.err_deadline_exceeded()
     case Code.Unavailable:
-      return "Service is temporarily unavailable. Please retry."
+      return m.err_unavailable()
     default:
-      return "Connection failed. Please retry."
+      return m.err_connection_failed()
   }
 }
