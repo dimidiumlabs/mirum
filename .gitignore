@@ -10,3 +10,6 @@ cmd/mirumd/web/node_modules
 # grpc generated code
 /internal/protocol/pb
 /cmd/mirumd/web/gen
+
+/.devcontainer
+.DS_Store

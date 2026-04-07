@@ -1,25 +1,30 @@
 // Copyright (c) 2026 Nikolay Govorov
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { useState } from "react"
-import { GalleryVerticalEnd, AlertCircle } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
-import { ErrorReason } from "@/gen/admin_pb"
-import { textForReason } from "@/lib/errors"
+import { useState } from "react";
+import { GalleryVerticalEnd, AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { ErrorReason } from "@/gen/admin_pb";
+import { textForReason } from "@/lib/errors";
 
 export type LoginFormProps = {
-  csrf: string
-  errorReason?: ErrorReason
-}
+  csrf: string;
+  errorReason?: ErrorReason;
+};
 
 export function Page({ csrf, errorReason }: LoginFormProps) {
   const [error, setError] = useState(
     errorReason !== undefined ? textForReason(errorReason) : undefined,
-  )
-  const dismissError = () => setError(undefined)
+  );
+  const dismissError = () => setError(undefined);
 
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-muted p-6 md:p-10">
@@ -56,12 +61,27 @@ export function Page({ csrf, errorReason }: LoginFormProps) {
 
                   <Field>
                     <FieldLabel htmlFor="email">Email</FieldLabel>
-                    <Input id="email" name="email" type="email" placeholder="hey@mirum.dev" required autoFocus onInput={dismissError} />
+                    <Input
+                      id="email"
+                      name="email"
+                      type="email"
+                      placeholder="hey@mirum.dev"
+                      required
+                      autoFocus
+                      onInput={dismissError}
+                    />
                   </Field>
 
                   <Field>
                     <FieldLabel htmlFor="password">Password</FieldLabel>
-                    <Input id="password" name="password" type="password" autoComplete="current-password" required onInput={dismissError} />
+                    <Input
+                      id="password"
+                      name="password"
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                      onInput={dismissError}
+                    />
                   </Field>
 
                   <Field>
@@ -77,11 +97,11 @@ export function Page({ csrf, errorReason }: LoginFormProps) {
           </Card>
 
           <FieldDescription className="px-6 text-center">
-            By clicking continue, you agree to our <a href="#">Terms of Service</a>{" "}
-            and <a href="#">Privacy Policy</a>.
+            By clicking continue, you agree to our{" "}
+            <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a>.
           </FieldDescription>
         </div>
       </div>
     </div>
-  )
+  );
 }
