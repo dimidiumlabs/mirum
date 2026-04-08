@@ -5,16 +5,17 @@ version = 1
 
 [[annotations]]
 path = [
-  "go.mod",
-  "go.sum",
-  "VERSION",
+  ".mailmap",
   "CLA.md",
   "CONCEPT.md",
   "README.md",
-  "pkg/logo.svg",
-  "pkg/dl/*",
-  "proto/buf.*",
+  "VERSION",
   "cmd/mirumd/web/*.json",
+  "go.mod",
+  "go.sum",
+  "pkg/dl/*",
+  "pkg/logo.svg",
+  "proto/buf.*",
 ]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov <me@govorov.online>"
 SPDX-License-Identifier = "AGPL-3.0-or-later"

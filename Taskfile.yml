@@ -11,9 +11,6 @@ vars:
   ARCHES: amd64 arm64 riscv64 ppc64le
   DEV_DB: mirum-local-dev
 
-env:
-  GOEXPERIMENT: runtimesecret
-
 tasks:
   lint:
     desc: Run static checks
@@ -21,6 +18,47 @@ tasks:
     cmds:
       - go vet ./...
       - gofmt -l . | grep . && exit 1 || true
+
+  signof:
+    desc: Verifies that the author is known and has signed the CLA
+    cmds:
+      - |
+        ALLOWLIST="Nikolay Govorov|github-actions\\[bot\\]"
+
+        bad=0
+        for sha in $(git log --no-merges --format=%H); do
+          author=$(git log -1 --format='%an' "$sha")
+          if echo "$author" | grep -qP "^($ALLOWLIST)$"; then
+            continue
+          fi
+
+          email=$(git log -1 --format='%ae' "$sha")
+          expected="${author} <${email}>"
+          if ! git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qF "$expected"; then
+            echo "Commit ${sha:0:8} by ${expected} is missing a valid Signed-off-by"
+            bad=1
+          fi
+        done
+
+        if [ "$bad" -eq 1 ]; then
+          echo "All commits must be signed off (git commit -s). See CLA.md"
+          exit 1
+        fi
+
+        # Check that all authors and committers are in .mailmap
+        missing=0
+        for email in $(git log --no-merges --format='%ae%n%ce' | sort -u); do
+          if ! grep -v '^#' .mailmap | grep -qF "<${email}>"; then
+            echo "Email <${email}> is not in .mailmap"
+            missing=1
+          fi
+        done
+
+        if [ "$missing" -eq 1 ]; then
+          echo "All contributors must be listed in .mailmap. See README.md"
+          exit 1
+        fi
+
   proto:
     desc: Generate ConnectRPC code from proto files
     sources:
@@ -74,29 +112,6 @@ tasks:
       - ../static/**/*
     cmds:
       - npm run build
-
-  build:
-    desc: "Build binaries (override GOOS/GOARCH for cross-compilation)"
-    deps: [proto, web:build]
-    vars:
-      GOOS: { sh: "echo ${GOOS:-$(go env GOOS)}" }
-      GOARCH: { sh: "echo ${GOARCH:-$(go env GOARCH)}" }
-    env:
-      CGO_ENABLED: "0"
-      GOOS: "{{.GOOS}}"
-      GOARCH: "{{.GOARCH}}"
-    cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - go build -o {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumd
-      - go build -o {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumw
-      - cp {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumd
-      - cp {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumw
-
-  test:
-    desc: Run all tests
-    deps: [build, web:size]
-    cmds:
-      - go test -race -count=1 ./...
 
   web:size:
     desc: Check frontend bundle size budgets
@@ -175,16 +190,6 @@ tasks:
     desc: Provision a full local dev environment (keys, config, database)
     deps: [devenv:keys, devenv:config, devenv:db]
 
-  run:
-    desc: Build and run mirumd against the dev environment
-    deps: [build, devenv]
-    cmds:
-      - "{{.BUILD_DIR}}/mirumd daemon --config dev/mirumd.yaml"
-
-  dev:
-    desc: Run Vite dev server and mirumd together (HMR-enabled)
-    deps: [web:dev, dev:server]
-
   dev:server:
     desc: Build mirumd with -tags dev and run it against the dev environment
     deps: [proto, devenv]
@@ -195,6 +200,39 @@ tasks:
       - mkdir -p {{.BUILD_DIR}}
       - go build -tags dev -o {{.BUILD_DIR}}/mirumd ./cmd/mirumd
       - "{{.BUILD_DIR}}/mirumd daemon --config dev/mirumd.yaml"
+
+  dev:
+    desc: Run Vite dev server and mirumd together (HMR-enabled)
+    deps: [web:dev, dev:server]
+
+  build:
+    desc: "Build binaries (override GOOS/GOARCH for cross-compilation)"
+    deps: [proto, web:build]
+    vars:
+      GOOS: { sh: "echo ${GOOS:-$(go env GOOS)}" }
+      GOARCH: { sh: "echo ${GOARCH:-$(go env GOARCH)}" }
+    env:
+      CGO_ENABLED: "0"
+      GOOS: "{{.GOOS}}"
+      GOARCH: "{{.GOARCH}}"
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -o {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumd
+      - go build -o {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumw
+      - cp {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumd
+      - cp {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumw
+
+  run:
+    desc: Build and run mirumd against the dev environment
+    deps: [build, devenv]
+    cmds:
+      - "{{.BUILD_DIR}}/mirumd daemon --config dev/mirumd.yaml"
+
+  test:
+    desc: Run all tests
+    deps: [build, web:size]
+    cmds:
+      - go test -race -count=1 ./...
 
   package:
     desc: Build deb/rpm packages for all architectures

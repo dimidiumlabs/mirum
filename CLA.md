@@ -1,9 +1,9 @@
-# Recluse Grant and Contributor License Agreement
+# Mirum Grant and Contributor License Agreement
 
 > This agreement is based on the Harmony Combined Contributor Agreement
 > Version 1.0 licensed under a [Creative Commons Attribution 3.0 Unported License](http://creativecommons.org/licenses/by/3.0/).
 
-Thank you for your interest in contributing to Recluse ("We" or "Us"). In order
+Thank you for your interest in contributing to Mirum ("We" or "Us"). In order
 to clarify the intellectual property license granted with Contributions from any
 person or entity, We must have a Contributor License Agreement ("CLA") on file
 that has been signed, accepted or otherwise agreed to by each contributor,
