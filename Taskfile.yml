@@ -12,10 +12,18 @@ vars:
   DEV_DB: mirum-local-dev
 
 tasks:
+  ci:
+    desc: Run all CI checks
+    cmds:
+      - task: signof
+      - task: lint
+      - task: test
+
   lint:
     desc: Run static checks
     deps: [proto]
     cmds:
+      - reuse lint
       - go vet ./...
       - gofmt -l . | grep . && exit 1 || true
 
@@ -236,17 +244,150 @@ tasks:
 
   package:
     desc: Build deb/rpm packages for all architectures
-    requires:
-      vars: [VERSION]
+    vars:
+      VERSION:
+        sh: |
+          ref="${GIT_REF:-$(git describe --tags --exact-match 2>/dev/null || echo "")}"
+          if [[ "$ref" == refs/tags/v* ]]; then
+            echo "${ref#refs/tags/v}"
+          elif [[ "$ref" == v* ]]; then
+            echo "${ref#v}"
+          else
+            echo "$(cat VERSION)~nightly.$(git log -1 --format=%ct)"
+          fi
+      CHANNEL:
+        sh: |
+          ref="${GIT_REF:-$(git describe --tags --exact-match 2>/dev/null || echo "")}"
+          if [[ "$ref" == refs/tags/v* || "$ref" == v* ]]; then echo stable; else echo nightly; fi
     env:
       VERSION: "{{.VERSION}}"
     cmds:
-      - mkdir -p {{.DIST_DIR}}
-      - for: { var: ARCHES }
-        cmd: |
-          task build GOOS=linux GOARCH={{.ITEM}}
-          ARCH={{.ITEM}} nfpm package --packager deb --target {{.DIST_DIR}}/
-          ARCH={{.ITEM}} nfpm package --packager rpm --target {{.DIST_DIR}}/
+      - |
+        cleanup() { rm -rf "$GNUPGHOME" /tmp/mirum-signing.asc 2>/dev/null; }
+        trap cleanup EXIT
+
+        if [ -n "${GPG_PRIVATE_KEY:-}" ]; then
+          export GNUPGHOME=$(mktemp -d)
+          chmod 700 "$GNUPGHOME"
+          printf '%s' "$GPG_PRIVATE_KEY" > /tmp/mirum-signing.asc
+          chmod 600 /tmp/mirum-signing.asc
+          gpg --batch --yes --passphrase "$GPG_PASSPHRASE" --import /tmp/mirum-signing.asc
+          export GPG_KEY_ID="{{.GPG_KEY_ID}}"
+          export SIGNING_PRIVATE_KEY="/tmp/mirum-signing.asc"
+          export NFPM_PASSPHRASE="$GPG_PASSPHRASE"
+        fi
+
+        mkdir -p {{.DIST_DIR}}
+        for arch in {{.ARCHES}}; do
+          task build GOOS=linux GOARCH=$arch
+          ARCH=$arch nfpm package --packager deb --target {{.DIST_DIR}}/
+          ARCH=$arch nfpm package --packager rpm --target {{.DIST_DIR}}/
           rm {{.BUILD_DIR}}/mirumd {{.BUILD_DIR}}/mirumw
+        done
+
+        printf 'VERSION={{.VERSION}}\nCHANNEL={{.CHANNEL}}\n' > {{.DIST_DIR}}/build.env
+
+  publish:release:
+    desc: Create or update a GitHub Release
+    requires:
+      vars: [CHANNEL, VERSION]
+    cmds:
+      - |
+        if [ "{{.CHANNEL}}" = "stable" ]; then
+          TAG="v{{.VERSION}}"
+          NAME="{{.VERSION}}"
+        else
+          TAG="nightly"
+          NAME="nightly"
+          git tag -f nightly
+          git push origin --force tag nightly
+          for asset in $(gh release view nightly --json assets --jq '.assets[].name' 2>/dev/null || true); do
+            gh release delete-asset nightly "$asset" --yes
+          done
+        fi
+
+        gh release create "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm \
+          --title "$NAME" \
+          $( [ "{{.CHANNEL}}" = "nightly" ] && echo "--prerelease" ) \
+          --notes "**Version**: {{.VERSION}}" \
+          || gh release upload "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm --clobber
+
+  publish:repos:
+    desc: Publish packages to APT and RPM repositories on S3
+    requires:
+      vars: [CHANNEL, S3_BUCKET, S3_PUBLIC_URL, S3_PROVIDER, S3_REGION, S3_ENDPOINT, GPG_KEY_ID]
+    cmds:
+      - |
+        set -e
+        export GNUPGHOME=$(mktemp -d)
+        RCLONE_CONF=$(mktemp)
+        chmod 700 "$GNUPGHOME"
+        cleanup() { rm -rf "$GNUPGHOME" "$RCLONE_CONF"; }
+        trap cleanup EXIT
+
+        cat > "$RCLONE_CONF" << EOF
+        [s3]
+        type = s3
+        provider = {{.S3_PROVIDER}}
+        access_key_id = ${S3_ACCESS_KEY_ID}
+        secret_access_key = ${S3_SECRET_ACCESS_KEY}
+        region = {{.S3_REGION}}
+        endpoint = {{.S3_ENDPOINT}}
+        EOF
+        export RCLONE_CONFIG="$RCLONE_CONF"
+
+        printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --import
+        echo "allow-loopback-pinentry" >> "$GNUPGHOME/gpg-agent.conf"
+        gpgconf --kill gpg-agent
+
+        # Upload static files
+        gpg --export --armor "{{.GPG_KEY_ID}}" > "$GNUPGHOME/public.gpg"
+        rclone copyto "$GNUPGHOME/public.gpg" "s3:{{.S3_BUCKET}}/public.gpg"
+        rclone copy pkg/dl/ "s3:{{.S3_BUCKET}}/"
+
+        # APT repository
+        CHANNEL={{.CHANNEL}}
+        mkdir -p /tmp/apt-cache apt-repo
+        rclone copy "s3:{{.S3_BUCKET}}/apt/" apt-repo/
+
+        for ch in stable nightly; do
+          mkdir -p apt-repo/pool/$ch
+          for arch in {{.ARCHES}}; do
+            mkdir -p apt-repo/dists/$ch/main/binary-$arch
+          done
+        done
+        cp {{.DIST_DIR}}/*.deb apt-repo/pool/$CHANNEL/
+
+        cd apt-repo
+        apt-ftparchive generate "$(pwd)/../pkg/apt-ftparchive.conf"
+        apt-ftparchive \
+          -o APT::FTPArchive::Release::Codename=$CHANNEL \
+          -o APT::FTPArchive::Release::Components=main \
+          -o APT::FTPArchive::Release::Architectures="{{.ARCHES}}" \
+          release dists/$CHANNEL/ > dists/$CHANNEL/Release
+        gpg --default-key="{{.GPG_KEY_ID}}" --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" -abs -o dists/$CHANNEL/Release.gpg dists/$CHANNEL/Release
+        gpg --default-key="{{.GPG_KEY_ID}}" --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --clearsign -o dists/$CHANNEL/InRelease dists/$CHANNEL/Release
+        cd ..
+        rclone copy apt-repo/ "s3:{{.S3_BUCKET}}/apt/" --progress
+
+        # RPM repository
+        mkdir -p rpm-repo
+        rclone copy "s3:{{.S3_BUCKET}}/rpm/$CHANNEL/" rpm-repo/
+
+        cp {{.DIST_DIR}}/*.rpm rpm-repo/
+
+        createrepo_c --update rpm-repo/
+        gpg --default-key="{{.GPG_KEY_ID}}" --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --detach-sign --armor rpm-repo/repodata/repomd.xml
+
+        cat > rpm-repo/mirum-${CHANNEL}.repo << REPOEOF
+        [mirum-${CHANNEL}]
+        name=Mirum ${CHANNEL}
+        gpgkey={{.S3_PUBLIC_URL}}/public.gpg
+        baseurl={{.S3_PUBLIC_URL}}/rpm/${CHANNEL}/
+        enabled=1
+        gpgcheck=1
+        REPOEOF
+
+        rclone copy rpm-repo/ "s3:{{.S3_BUCKET}}/rpm/$CHANNEL/" --progress
 
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
