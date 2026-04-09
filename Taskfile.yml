@@ -10,6 +10,7 @@ vars:
   DIST_DIR: build/dist
   ARCHES: amd64 arm64 riscv64 ppc64le
   DEV_DB: mirum-local-dev
+  DOCKER: "false"
 
 tasks:
   ci:
@@ -182,10 +183,11 @@ tasks:
           key: "dev/server.key"
         EOF
 
-  devenv:db:
-    desc: Create the dev postgres role and database (idempotent, needs sudo)
+  devenv:db:local:
+    internal: true
+    desc: Create the dev postgres role and database on a local install (needs sudo)
     status:
-      - PGPASSWORD={{.DEV_DB}} psql -h localhost -U {{.DEV_DB}} -d {{.DEV_DB}} -c 'SELECT 1' >/dev/null 2>&1
+      - '[ "{{.DOCKER}}" = "true" ] || PGPASSWORD={{.DEV_DB}} psql -h localhost -U {{.DEV_DB}} -d {{.DEV_DB}} -c "SELECT 1" >/dev/null 2>&1'
     cmds:
       - |
         sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{.DEV_DB}}'" | grep -q 1 ||
@@ -193,6 +195,29 @@ tasks:
       - |
         sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{.DEV_DB}}'" | grep -q 1 ||
           sudo -u postgres psql -c "CREATE DATABASE \"{{.DEV_DB}}\" OWNER \"{{.DEV_DB}}\""
+
+  devenv:db:docker:
+    internal: true
+    desc: Start a Postgres Docker container for dev
+    status:
+      - '[ "{{.DOCKER}}" != "true" ] || docker exec {{.DEV_DB}} pg_isready -U {{.DEV_DB}} >/dev/null 2>&1 || nc -z localhost 5432 2>/dev/null'
+    cmds:
+      - docker run -d
+        --name {{.DEV_DB}}
+        -e POSTGRES_USER={{.DEV_DB}}
+        -e POSTGRES_PASSWORD={{.DEV_DB}}
+        -e POSTGRES_DB={{.DEV_DB}}
+        -p 5432:5432
+        postgres:18
+      - |
+        echo "Waiting for postgres..."
+        until docker exec {{.DEV_DB}} pg_isready -U {{.DEV_DB}} >/dev/null 2>&1; do
+          sleep 1
+        done
+
+  devenv:db:
+    desc: "Create the dev postgres role and database (set DOCKER=true for Docker)"
+    deps: [devenv:db:local, devenv:db:docker]
 
   devenv:
     desc: Provision a full local dev environment (keys, config, database)
