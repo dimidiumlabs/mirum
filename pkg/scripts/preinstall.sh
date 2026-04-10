@@ -4,7 +4,7 @@
 
 set -e
 
-for svc in mirumd mirumw; do
+for svc in mirum-server mirum-worker; do
   if ! getent group $svc >/dev/null; then
     groupadd --system $svc
   fi

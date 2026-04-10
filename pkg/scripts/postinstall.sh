@@ -4,10 +4,10 @@
 
 set -e
 
-if [ -x "/bin/systemctl" ] && [ -d /run/systemd/system ] && [ -f /usr/lib/systemd/system/mirumd.service ]; then
+if [ -x "/bin/systemctl" ] && [ -d /run/systemd/system ] && [ -f /usr/lib/systemd/system/mirum-server.service ]; then
   /bin/systemctl daemon-reload
 
   # Don't enable by default, don't know in advance whether it's a daemon or a worker
-  # /bin/systemctl enable mirumd
-  # /bin/systemctl enable mirumw
+  # /bin/systemctl enable mirum-server
+  # /bin/systemctl enable mirum-worker
 fi

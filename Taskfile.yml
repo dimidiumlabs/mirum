@@ -70,22 +70,26 @@ tasks:
   proto:
     desc: Generate ConnectRPC code from proto files
     sources:
-      - proto/*.proto
-      - proto/buf.gen.yaml
-      - proto/buf.yaml
+      - internal/protocol/proto/*.proto
+      - internal/protocol/proto/buf.gen.yaml
+      - cmd/mirum-server/proto/*.proto
+      - cmd/mirum-server/proto/buf.gen.yaml
+      - buf.yaml
     generates:
-      - internal/protocol/pb/**/*.go
-      - cmd/mirumd/web/gen/**/*.ts
+      - internal/protocol/wirepb/**/*.go
+      - cmd/mirum-server/apipb/**/*.go
+      - cmd/mirum-server/web/gen/**/*.ts
     cmds:
-      - rm -rf internal/protocol/pb cmd/mirumd/web/gen
-      - cd proto && buf generate
-      # admin_pb.ts imports file_buf_validate_validate from buf/validate/validate_pb.js.
+      - rm -rf internal/protocol/wirepb cmd/mirum-server/apipb cmd/mirum-server/web/gen
+      - cd internal/protocol/proto && buf generate
+      - cd cmd/mirum-server/proto && buf generate
+      # api_pb.ts imports file_buf_validate_validate from buf/validate/validate_pb.js.
       # buf.validate carries only server-side field annotations that the browser
       # never decodes, so replace the 200+ KB generated schema with an empty
       # descriptor stub that satisfies the GenFile type.
-      - mkdir -p cmd/mirumd/web/gen/buf/validate
+      - mkdir -p cmd/mirum-server/web/gen/buf/validate
       - |
-        cat > cmd/mirumd/web/gen/buf/validate/validate_pb.ts <<'EOF'
+        cat > cmd/mirum-server/web/gen/buf/validate/validate_pb.ts <<'EOF'
         // Stub: see Taskfile.yml proto task. buf.validate is server-only.
         import { fileDesc, type GenFile } from "@bufbuild/protobuf/codegenv2"
         export const file_buf_validate_validate: GenFile = /*@__PURE__*/ fileDesc("")
@@ -93,7 +97,7 @@ tasks:
 
   web:install:
     desc: Install frontend dependencies
-    dir: cmd/mirumd/web
+    dir: cmd/mirum-server/web
     sources:
       - package.json
       - package-lock.json
@@ -103,8 +107,8 @@ tasks:
       - npm ci
 
   web:build:
-    desc: Build the frontend into cmd/mirumd/static
-    dir: cmd/mirumd/web
+    desc: Build the frontend into cmd/mirum-server/static
+    dir: cmd/mirum-server/web
     deps: [web:install, proto]
     sources:
       - api/**/*
@@ -123,7 +127,7 @@ tasks:
 
   web:size:
     desc: Check frontend bundle size budgets
-    dir: cmd/mirumd/web
+    dir: cmd/mirum-server/web
     deps: [web:build]
     sources:
       - ../static/assets/*
@@ -132,8 +136,8 @@ tasks:
       - npm run size
 
   web:dev:
-    desc: Run Vite dev server (use with `go run -tags dev ./cmd/mirumd`)
-    dir: cmd/mirumd/web
+    desc: Run Vite dev server (use with `go run -tags dev ./cmd/mirum-server`)
+    dir: cmd/mirum-server/web
     deps: [web:install, proto]
     prefix: vite
     env:
@@ -154,8 +158,8 @@ tasks:
         test -f dev/server.crt ||
         openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1
         -keyout dev/server.key -out dev/server.crt
-        -days 365 -nodes -subj "/CN=mirumd"
-        -addext "subjectAltName=DNS:mirumd,DNS:localhost"
+        -days 365 -nodes -subj "/CN=mirum-server"
+        -addext "subjectAltName=DNS:mirum-server,DNS:localhost"
       - >-
         test -f dev/worker.key ||
         openssl genpkey -algorithm ed25519 -out dev/worker.key
@@ -164,13 +168,13 @@ tasks:
         openssl pkey -in dev/worker.key -pubout -out dev/worker.pub
 
   devenv:config:
-    desc: Write dev/mirumd.yaml if missing
+    desc: Write dev/mirum-server.yaml if missing
     status:
-      - test -f dev/mirumd.yaml
+      - test -f dev/mirum-server.yaml
     cmds:
       - mkdir -p dev
       - |
-        cat > dev/mirumd.yaml <<EOF
+        cat > dev/mirum-server.yaml <<EOF
         web_addr: ":3000"
         grpc_addr: ":2026"
         admin_socket: "/tmp/mirum-admin.sock"
@@ -199,18 +203,18 @@ tasks:
     deps: [devenv:keys, devenv:config, devenv:db]
 
   dev:server:
-    desc: Build mirumd with -tags dev and run it against the dev environment
+    desc: Build mirum-server with -tags dev and run it against the dev environment
     deps: [proto, devenv]
-    prefix: mirumd
+    prefix: mirum-server
     env:
       CGO_ENABLED: "0"
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -tags dev -o {{.BUILD_DIR}}/mirumd ./cmd/mirumd
-      - "{{.BUILD_DIR}}/mirumd daemon --config dev/mirumd.yaml"
+      - go build -tags dev -o {{.BUILD_DIR}}/mirum-server ./cmd/mirum-server
+      - "{{.BUILD_DIR}}/mirum-server daemon --config dev/mirum-server.yaml"
 
   dev:
-    desc: Run Vite dev server and mirumd together (HMR-enabled)
+    desc: Run Vite dev server and mirum-server together (HMR-enabled)
     deps: [web:dev, dev:server]
 
   build:
@@ -225,16 +229,16 @@ tasks:
       GOARCH: "{{.GOARCH}}"
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -o {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumd
-      - go build -o {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} ./cmd/mirumw
-      - cp {{.BUILD_DIR}}/mirumd-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumd
-      - cp {{.BUILD_DIR}}/mirumw-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirumw
+      - go build -o {{.BUILD_DIR}}/mirum-server-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum-server
+      - go build -o {{.BUILD_DIR}}/mirum-worker-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum-worker
+      - cp {{.BUILD_DIR}}/mirum-server-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirum-server
+      - cp {{.BUILD_DIR}}/mirum-worker-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirum-worker
 
   run:
-    desc: Build and run mirumd against the dev environment
+    desc: Build and run mirum-server against the dev environment
     deps: [build, devenv]
     cmds:
-      - "{{.BUILD_DIR}}/mirumd daemon --config dev/mirumd.yaml"
+      - "{{.BUILD_DIR}}/mirum-server daemon --config dev/mirum-server.yaml"
 
   test:
     desc: Run all tests
@@ -282,7 +286,7 @@ tasks:
           task build GOOS=linux GOARCH=$arch
           ARCH=$arch nfpm package --packager deb --target {{.DIST_DIR}}/
           ARCH=$arch nfpm package --packager rpm --target {{.DIST_DIR}}/
-          rm {{.BUILD_DIR}}/mirumd {{.BUILD_DIR}}/mirumw
+          rm {{.BUILD_DIR}}/mirum-server {{.BUILD_DIR}}/mirum-worker
         done
 
         printf 'VERSION={{.VERSION}}\nCHANNEL={{.CHANNEL}}\n' > {{.DIST_DIR}}/build.env

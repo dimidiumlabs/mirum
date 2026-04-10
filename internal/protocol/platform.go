@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	mirum "dimidiumlabs/mirum"
-	"dimidiumlabs/mirum/internal/protocol/pb"
+	"dimidiumlabs/mirum/internal/protocol/wirepb"
 )
 
 var ErrInvalidVersion = errors.New("invalid version string")
@@ -22,53 +22,53 @@ var (
 	Patch uint32
 )
 
-var osMap = map[string]pb.Os{
-	"linux":     pb.Os_OS_LINUX,
-	"darwin":    pb.Os_OS_DARWIN,
-	"windows":   pb.Os_OS_WINDOWS,
-	"freebsd":   pb.Os_OS_FREEBSD,
-	"openbsd":   pb.Os_OS_OPENBSD,
-	"netbsd":    pb.Os_OS_NETBSD,
-	"dragonfly": pb.Os_OS_DRAGONFLY,
-	"illumos":   pb.Os_OS_ILLUMOS,
-	"solaris":   pb.Os_OS_SOLARIS,
-	"aix":       pb.Os_OS_AIX,
-	"plan9":     pb.Os_OS_PLAN9,
-	"android":   pb.Os_OS_ANDROID,
-	"ios":       pb.Os_OS_IOS,
-	"js":        pb.Os_OS_JS,
-	"wasip1":    pb.Os_OS_WASIP1,
+var osMap = map[string]wirepb.Os{
+	"linux":     wirepb.Os_OS_LINUX,
+	"darwin":    wirepb.Os_OS_DARWIN,
+	"windows":   wirepb.Os_OS_WINDOWS,
+	"freebsd":   wirepb.Os_OS_FREEBSD,
+	"openbsd":   wirepb.Os_OS_OPENBSD,
+	"netbsd":    wirepb.Os_OS_NETBSD,
+	"dragonfly": wirepb.Os_OS_DRAGONFLY,
+	"illumos":   wirepb.Os_OS_ILLUMOS,
+	"solaris":   wirepb.Os_OS_SOLARIS,
+	"aix":       wirepb.Os_OS_AIX,
+	"plan9":     wirepb.Os_OS_PLAN9,
+	"android":   wirepb.Os_OS_ANDROID,
+	"ios":       wirepb.Os_OS_IOS,
+	"js":        wirepb.Os_OS_JS,
+	"wasip1":    wirepb.Os_OS_WASIP1,
 }
 
-var archMap = map[string]pb.Arch{
-	"amd64":    pb.Arch_ARCH_AMD64,
-	"arm64":    pb.Arch_ARCH_ARM64,
-	"386":      pb.Arch_ARCH_386,
-	"arm":      pb.Arch_ARCH_ARM,
-	"riscv64":  pb.Arch_ARCH_RISCV64,
-	"ppc64le":  pb.Arch_ARCH_PPC64LE,
-	"ppc64":    pb.Arch_ARCH_PPC64,
-	"s390x":    pb.Arch_ARCH_S390X,
-	"mips64le": pb.Arch_ARCH_MIPS64LE,
-	"mips64":   pb.Arch_ARCH_MIPS64,
-	"mipsle":   pb.Arch_ARCH_MIPSLE,
-	"mips":     pb.Arch_ARCH_MIPS,
-	"loong64":  pb.Arch_ARCH_LOONG64,
-	"wasm":     pb.Arch_ARCH_WASM,
+var archMap = map[string]wirepb.Arch{
+	"amd64":    wirepb.Arch_ARCH_AMD64,
+	"arm64":    wirepb.Arch_ARCH_ARM64,
+	"386":      wirepb.Arch_ARCH_386,
+	"arm":      wirepb.Arch_ARCH_ARM,
+	"riscv64":  wirepb.Arch_ARCH_RISCV64,
+	"ppc64le":  wirepb.Arch_ARCH_PPC64LE,
+	"ppc64":    wirepb.Arch_ARCH_PPC64,
+	"s390x":    wirepb.Arch_ARCH_S390X,
+	"mips64le": wirepb.Arch_ARCH_MIPS64LE,
+	"mips64":   wirepb.Arch_ARCH_MIPS64,
+	"mipsle":   wirepb.Arch_ARCH_MIPSLE,
+	"mips":     wirepb.Arch_ARCH_MIPS,
+	"loong64":  wirepb.Arch_ARCH_LOONG64,
+	"wasm":     wirepb.Arch_ARCH_WASM,
 }
 
-func DetectOs() pb.Os {
+func DetectOs() wirepb.Os {
 	if v, ok := osMap[runtime.GOOS]; ok {
 		return v
 	}
-	return pb.Os_OS_UNSPECIFIED
+	return wirepb.Os_OS_UNSPECIFIED
 }
 
-func DetectArch() pb.Arch {
+func DetectArch() wirepb.Arch {
 	if v, ok := archMap[runtime.GOARCH]; ok {
 		return v
 	}
-	return pb.Arch_ARCH_UNSPECIFIED
+	return wirepb.Arch_ARCH_UNSPECIFIED
 }
 
 func init() {
@@ -99,6 +99,6 @@ func VersionString() string {
 	return fmt.Sprintf("%d.%d.%d", Major, Minor, Patch)
 }
 
-func VersionProto() *pb.Version {
-	return &pb.Version{Major: Major, Minor: Minor, Patch: Patch}
+func VersionProto() *wirepb.Version {
+	return &wirepb.Version{Major: Major, Minor: Minor, Patch: Patch}
 }

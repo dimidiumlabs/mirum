@@ -4,9 +4,10 @@
 /dev
 /build
 /.task
-cmd/mirumd/static
-cmd/mirumd/web/node_modules
+cmd/mirum-server/static
+cmd/mirum-server/web/node_modules
 
 # grpc generated code
-/internal/protocol/pb
-/cmd/mirumd/web/gen
+/internal/protocol/wirepb
+/cmd/mirum-server/apipb
+/cmd/mirum-server/web/gen

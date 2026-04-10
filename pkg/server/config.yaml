@@ -1,0 +1,27 @@
+# Copyright (c) 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Ignored when the corresponding systemd socket activation fd is present.
+# See mirum-server.socket for details (FileDescriptorName=grpc / web).
+grpc_addr: :2026
+web_addr: :3000
+admin_socket: /run/mirum-server/admin.sock
+database_uri: ""
+webhook_secret: ""
+token: ""
+pepper: ""
+
+grpc_tls:
+  cert: ""
+  key: ""
+
+# Optional — omit or leave empty to disable TLS on the web listener.
+# web_tls:
+#   cert: ""
+#   key: ""
+
+# CIDR list of trusted reverse proxies for X-Forwarded-For resolution.
+# Empty = trust RemoteAddr only (safe default).
+trusted_proxies:
+  - 127.0.0.0/8
+  - ::1/128

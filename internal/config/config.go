@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Nikolay Govorov
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Package config holds hard-coded tunables shared across mirumd and mirumw:
+// Package config holds hard-coded tunables shared across mirum-server and mirum-worker:
 // timeouts, sizes, intervals, and limits that are not (yet) exposed through
 // the YAML user config. Grouping them here keeps magic numbers out of call
 // sites and gives a single place to audit defaults.

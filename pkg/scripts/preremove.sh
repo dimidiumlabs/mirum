@@ -5,9 +5,9 @@
 set -e
 
 if [ -x "/bin/systemctl" ] && [ -d /run/systemd/system ]; then
-  /bin/systemctl stop mirumd.service || true
-  /bin/systemctl disable mirumd.service || true
+  /bin/systemctl stop mirum-server.service || true
+  /bin/systemctl disable mirum-server.service || true
 
-  /bin/systemctl stop 'mirumw@*' || true
-  /bin/systemctl disable mirumw@.service || true
+  /bin/systemctl stop 'mirum-worker@*' || true
+  /bin/systemctl disable mirum-worker@.service || true
 fi

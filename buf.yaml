@@ -1,0 +1,9 @@
+# Copyright (c) 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+version: v2
+modules:
+  - path: internal/protocol/proto
+  - path: cmd/mirum-server/proto
+deps:
+  - buf.build/bufbuild/protovalidate

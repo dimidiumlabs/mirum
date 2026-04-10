@@ -1,0 +1,18 @@
+# Copyright (c) 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+server: localhost:2026
+
+# Ed25519 private key for worker authentication (PEM-encoded PKCS8).
+# Generate with:
+#   openssl genpkey -algorithm Ed25519 -out /etc/mirum/worker/default.key
+#   chmod 600 /etc/mirum/worker/default.key
+#
+# Register the public key on the daemon:
+#   PUBKEY=$(openssl pkey -in /etc/mirum/worker/default.key -pubout -outform der | base64 -w0)
+#   mirum-server --socket /run/mirum-server/admin.sock worker create --pubkey "$PUBKEY"
+key_file: /etc/mirum/worker/default.key
+
+# Custom CA certificate for self-signed/dev TLS.
+# Leave empty to use system trust store.
+tls_ca: ""

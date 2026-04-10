@@ -10,12 +10,12 @@ path = [
   "CONCEPT.md",
   "README.md",
   "VERSION",
-  "cmd/mirumd/web/*.json",
+  "cmd/mirum-server/web/*.json",
   "go.mod",
   "go.sum",
   "pkg/dl/*",
   "pkg/logo.svg",
-  "proto/buf.*",
+  "buf.*",
 ]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov <me@govorov.online>"
 SPDX-License-Identifier = "AGPL-3.0-or-later"

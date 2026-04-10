@@ -18,55 +18,55 @@ contents:
   - src: ./README.md
     dst: /usr/share/doc/mirum/README.md
 
-  - src: build/mirumd
-    dst: /usr/local/bin/mirumd
+  - src: build/mirum-server
+    dst: /usr/local/bin/mirum-server
     file_info:
       mode: 0755
 
-  - src: build/mirumw
-    dst: /usr/local/bin/mirumw
+  - src: build/mirum-worker
+    dst: /usr/local/bin/mirum-worker
     file_info:
       mode: 0755
 
-  - src: pkg/mirumd.yaml
-    dst: /etc/mirum/mirumd.yaml
+  - src: pkg/server/config.yaml
+    dst: /etc/mirum/server/config.yaml
     type: config|noreplace
     file_info:
       mode: 0640
       owner: root
-      group: mirumd
+      group: mirum-server
 
-  - src: pkg/mirumw-default.yaml
-    dst: /etc/mirum/mirumw-default.yaml
+  - src: pkg/worker/default.yaml
+    dst: /etc/mirum/worker/default.yaml
     type: config|noreplace
     file_info:
       mode: 0640
       owner: root
-      group: mirumw
+      group: mirum-worker
 
-  - src: pkg/mirumd.service
-    dst: /usr/lib/systemd/system/mirumd.service
+  - src: pkg/mirum-server.service
+    dst: /usr/lib/systemd/system/mirum-server.service
     file_info:
       mode: 0644
 
-  - src: pkg/mirumw@.service
-    dst: /usr/lib/systemd/system/mirumw@.service
+  - src: pkg/mirum-worker@.service
+    dst: /usr/lib/systemd/system/mirum-worker@.service
     file_info:
       mode: 0644
 
-  - dst: /var/lib/mirumd
+  - dst: /var/lib/mirum-server
     type: dir
     file_info:
       mode: 0750
-      owner: mirumd
-      group: mirumd
+      owner: mirum-server
+      group: mirum-server
 
-  - dst: /var/lib/mirumw
+  - dst: /var/lib/mirum-worker
     type: dir
     file_info:
       mode: 0750
-      owner: mirumw
-      group: mirumw
+      owner: mirum-worker
+      group: mirum-worker
 
 
 scripts:

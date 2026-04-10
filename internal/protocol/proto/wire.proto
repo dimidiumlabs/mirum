@@ -1,0 +1,141 @@
+// Copyright (c) 2026 Nikolay Govorov
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+syntax = "proto3";
+
+package mirum.wire;
+
+option go_package = "dimidiumlabs/mirum/internal/protocol/wirepb";
+
+// Describes the contract between the worker and the server.
+// GRPC is the only contract between them, so to implement your own worker,
+// you only need to implement this service.
+//
+// Authentication is handled via mTLS: the worker presents a self-signed
+// X.509 certificate containing its ed25519 public key. The server verifies
+// the key against its database during the TLS handshake.
+//
+// Worker metadata (name, version, os, arch) and clock skew detection
+// are embedded in the certificate (URI SAN and NotBefore).
+service Worker {
+  // When a worker has free resources, it requests a task from the server.
+  // The call will block if the server currently has no tasks.
+  rpc Poll(PollRequest) returns (Task);
+
+  // When the task is completed, the worker reports the result to the server.
+  rpc Complete(TaskResult) returns (CompleteResponse);
+}
+
+message Version {
+  uint32 major = 1;
+  uint32 minor = 2;
+  uint32 patch = 3;
+}
+
+enum Os {
+  OS_UNSPECIFIED = 0;
+
+  // Major
+  OS_LINUX = 1;
+  OS_DARWIN = 2;
+  OS_WINDOWS = 3;
+
+  // BSD family
+  OS_FREEBSD = 4;
+  OS_OPENBSD = 5;
+  OS_NETBSD = 6;
+  OS_DRAGONFLY = 7;
+
+  // Unix / POSIX
+  OS_ILLUMOS = 8;
+  OS_SOLARIS = 9;
+  OS_AIX = 10;
+  OS_HURD = 11;
+
+  // Research / exotic
+  OS_PLAN9 = 12;
+  OS_HAIKU = 13;
+  OS_REDOX = 14;
+  OS_FUCHSIA = 15;
+  OS_SERENITY = 16;
+
+  // Embedded / real-time
+  OS_ZEPHYR = 17;
+  OS_NUTTX = 18;
+
+  // Go-supported
+  OS_ANDROID = 19;
+  OS_IOS = 20;
+  OS_JS = 21;
+  OS_WASIP1 = 22;
+}
+
+enum Arch {
+  ARCH_UNSPECIFIED = 0;
+
+  // Common
+  ARCH_386 = 1;
+  ARCH_ARM = 2;
+  ARCH_AMD64 = 3;
+  ARCH_ARM64 = 4;
+
+  // RISC-V
+  ARCH_RISCV64 = 5;
+  ARCH_RISCV32 = 6;
+
+  // Power
+  ARCH_PPC = 7;
+  ARCH_PPC64 = 8;
+  ARCH_PPC64LE = 9;
+
+  // IBM
+  ARCH_S390 = 10;
+  ARCH_S390X = 11;
+
+  // MIPS
+  ARCH_MIPS64LE = 12;
+  ARCH_MIPS64 = 13;
+  ARCH_MIPSLE = 14;
+  ARCH_MIPS = 15;
+
+  // Chinese
+  ARCH_LOONG64 = 16;
+  ARCH_SW64 = 17;
+
+  // SPARC
+  ARCH_SPARC64 = 18;
+  ARCH_SPARC = 19;
+
+  // Other
+  ARCH_ALPHA = 20;
+  ARCH_HPPA = 21;
+  ARCH_M68K = 22;
+  ARCH_SH4 = 23;
+  ARCH_IA64 = 24;
+  ARCH_WASM = 25;
+  ARCH_XTENSA = 26;
+  ARCH_ARC = 27;
+  ARCH_CSKY = 28;
+  ARCH_HEXAGON = 29;
+  ARCH_MICROBLAZE = 30;
+  ARCH_NIOS2 = 31;
+  ARCH_OPENRISC = 32;
+}
+
+message PollRequest {}
+
+message Task {
+  string id = 1;
+  string clone_url = 2;
+  string branch = 3;
+  string sha = 4;
+  string repo_full_name = 5;
+}
+
+message TaskResult {
+  string task_id = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+message CompleteResponse {}
