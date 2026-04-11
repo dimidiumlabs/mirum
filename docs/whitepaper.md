@@ -1,118 +1,4 @@
-# The Concept Document
-
-> [!CAUTION]
-> This document describes how I would like to design the system;
-> it doesn't reflect the current state. Almost everything is still unimplemented.
-
-The really portable CI platform with VM-first isolation,
-programmable pipelines, and local execution parity.
-
-## [Why](https://xkcd.com/927/)
-
-The goal of this project is to build a CI system that's both convenient for tiny
-projects and suitable for gigantic C++ codebases like Chromium or llvm.
-
-For this to work, several key decisions need to be made:
-
-**Open source.**
-You can and should build SaaS, but the user must be able to deploy the entire
-system themselves. Self-hosted runners aren't enough.
-
-**Portability and cross-platform support.**
-You should be able to run on at least x64, arm64, riscv64, powerpc, s390x, and
-loongarch64, as well as Linux, {Free,Open,Net}BSD, Windows, and macOS. Users
-should be able to add exotic features like Haiku and Plan9, or even a custom kernel.
-
-**Hermitic builds.**
-All official platforms should support sealed builds with declarative environment
-descriptions (like Docker, yes). Hosted builds should work everywhere.
-
-**Different deployment models.**
-Not everyone can deploy themselves, and not everyone wants to. Offer open-source
-SaaS, cloud and self-hosted runners, and fully autonomous solutions. The degree
-of autonomy is the user's choice.
-
-**Dynamic pipelines.**
-Don't assume that all tasks are described by a static YAML/TOML configuration.
-This is often the case, but you should have a path for dynamic pipelines when they
-are needed.
-
-**Security and Isolation.**
-CI is the most security-sensitive platform, affecting testing, deployment to production,
-and releases.
-CI has access to both the code and the production environment.
-Since the "just hide it behind a VPN" option doesn't work for either SaaS or open
-source projects where CI must be public, you can't be overly paranoid about architectural
-decisions. Consider that the code for your pacemaker might be tested here.
-
-**Local debugging.**
-You should be able to run the build locally, get the console into the sandbox, and
-attach a debugger. There's nothing more pointless and merciless than trying to fix
-automation than the cycle of "test commit -> push to Git Forge -> hope it works."
-
-- `mirum run` — run the pipeline locally with the same VMs but with a local copy
-  of your code and a debugger
-- `mirum ssh` — connect to a failed VM over SSH and debug on real hardware
-- `mirum try` — run a build from local changes on the cluster without creating
-  throwaway commits.
-
-## How
-
-The architecture is built on two key solutions:
-[Virtual Machines](https://en.wikipedia.org/wiki/Virtualization#Hardware_virtualization)
-and [Starlark](https://starlark-lang.org/).
-
-### Virtualization vs. Containers vs. Host
-
-Modern CI must provide a reproducible and hermetic environment for every task.
-Despite the popularity of container isolation, it's a Linux-specific technology
-with many limitations. As soon as you need Windows, a specific kernel version,
-or even systemd, you're forced to revert to bare, stateful runners you've manually
-configured.
-
-A solution was proposed in Sourcehut: use ephemeral VMs from a snapshot for isolated
-builds. Unlike a container, a VM can run any guest system, can emulate inaccessible
-architectures, provides a full stack including the kernel, and provides sufficient
-isolation to allow a user to access the build machine via SSH.
-
-The idea is to split the runner into two layers:
-
-- mirum-agent, a highly portable statically linked C binary that can copy files,
-  execute bash commands, and collect logs and resources.
-- mirum-worker, a full-fledged runtime that launches a disposable VM for each task,
-  launching and managing mirum-agent within the VM.
-
-This architecture allows for full support on official platforms, including isolation,
-SSH access, and so on. On the other hand, if you're testing an exotic system
-(for example, on bare metal without any OS at all), port mirum-agent and you'll
-be able to connect to a regular mirum server. You can also offer specialized versions
-of mirum-worker for containers/clouds/lambdas, or any custom environment.
-Simply run mirum-agent in a sandbox and issue commands to it.
-
-Using VMs also significantly simplifies infrastructure.
-One x64 host can run Linux, Windows, and *BSD,
-while one arm64 mac mini can run macOS, Linux, and Windows on arm64.
-
-### Starlark
-
-Today, there are two ways to describe pipelines: statically in yaml or by writing
-a script in a scripting language like JavaScript/Python/Ruby.
-
-Mirum occupies a niche between the two and offers Starlark as a configuration language.
-Starlark is a specialized embedded programming language developed for the Bazel
-build system. On the one hand, you have variable conditions and loops, imports,
-objects, and arrays.
-
-Unlike yaml, you don't have to reinvent the wheel. Settings are variables, tasks
-are functions, build matrices are loops, and the reusable actions library is
-a simple import. Python syntax is well-known and doesn't require learning your DSL.
-
-On the other hand, it's not an algorithmically complete language. There are no side
-effects, no need for a separate sandbox, and no need to drag in a runtime. The CI
-server has total control over Starlark execution. But unlike Kotlin DSL (TeamCity),
-Groovy (Jenkins), or Python (Buildbot), Starlark forbids side effects: no network,
-no filesystem, no arbitrary imports. Eval is safe for untrusted code
-(PRs from external contributors), deterministic, and cacheable.
+# Mirum Whitepaper
 
 ## Modules
 
@@ -154,10 +40,11 @@ It's a control plane.
 Connects to the server via outbound gRPC, declares its capabilities,
 and picks tasks from the queue that it can execute.
 
-Executes starlark (project + pipeline functions, coroutine model) and notifies
-the server of changes (for example, new watch settings).
-Starts a VM with tasks and returns the results to the server. If starlark is blocked
-on yeald, it leaves the blocked coroutine in the queue.
+Evaluates pipeline Starlark (coroutine model), starts a VM for each
+task, runs the task function inside, and returns the results to the
+server. If a pipeline yields on a task result it is not yet ready for,
+the worker leaves the suspended coroutine in the queue and resumes it
+when the awaited task completes.
 
 It's a data plane. _Only the worker has access to the user's secrets and code._
 
@@ -179,15 +66,18 @@ Small and simple enough to be auditable.
 This component lives close to the actual code, making it highly security-sensitive.
 
 **mirum (CLI)** — developer tool.
-Contains a Starlark runtime for local eval — takes the server's role locally.
+Contains a Starlark runtime for local eval and embeds a host worker for
+in-process execution. Takes the server's role locally.
 
 Technically, it is a lightweight disposable server that runs a real worker locally
 to replicate real-world conditions in a cluster as closely as possible.
 
-`mirum run`: eval pipeline → spawn worker → dispatch tasks → display logs.
-`mirum try`: send a diff to the server.
-`mirum attach`: shell into a VM.
-`mirum eval`: show the DAG without running anything.
+- `mirum task <name>`: run a single registered task on the host, no VM.
+- `mirum run <pipeline>`: eval pipeline → spawn worker → dispatch tasks → display logs.
+- `mirum list`: list registered tasks and pipelines.
+- `mirum try <pipeline>`: send a local diff to the server.
+- `mirum ssh <vm>`: shell into a failed VM.
+- `mirum eval <pipeline>`: show the DAG without running anything.
 
 ## Configuration Model
 
@@ -197,113 +87,124 @@ runs in a single VM. Pipelines are DAGs (directed acyclic graphs) that invoke mu
 tasks and pass state between them. A project tracks a list of pipelines, their trigger
 rules (watch, cron, manual, ...), and result notifications.
 
-A quick example pipeline, all in one starlark file:
+A quick example, all in one starlark file:
 
 ```python
-# /.mirum/main.star — entry point and the only file required
+# /Mirumfile — the only file required
+
+load("@mirum//on.star", "git")
 
 # A single pipeline describes a matrix of multiple operating systems and architectures.
 # A single Linux host with KVM serves Linux, Windows, and BSD guests.
 # A macOS host serves macOS, Linux, and BSD.
-# Tasks adapt to the platform via `ctx.os` — they don't choose it.
+# Tasks adapt to the platform via `tctx.os` — they don't choose it.
 
-# ctx.run takes an optional setup function to indicate which steps
+# pctx.run takes an optional setup function to indicate which steps
 # are environment setup only, so the resulting image can be cached
-def setup(ctx):
-    ctx.shell("apt-get update && apt-get install -y cargo")
+def setup(tctx):
+    tctx.shell("apt-get update && apt-get install -y cargo")
 
-def build(ctx):
-    ctx.checkout()
-    ctx.shell("cargo build --release")
-    ctx.upload("target/release/myapp", artifact="bin")
+def build(tctx):
+    tctx.checkout()
+    tctx.shell("cargo build --release")
+    tctx.upload("target/release/myapp", artifact="bin")
+task(build)
 
-def test(ctx):
+def test(tctx):
     # test knows nothing about build — only that it needs an artifact.
     # that artifact could have been built right here, come from cache
     # or a registry, or even uploaded from a developer's laptop
-    ctx.download("bin", dest=".")
-    ctx.shell("cargo test")
+    tctx.download("bin", dest=".")
+    tctx.shell("cargo test")
+task(test)
 
-# Write a function that describes your pipeline.
-def build_pipeline(ctx):
-    src = ctx.source()
-
-    # Build steps are simply functions that the pipeline calls in the VM sandbox.
-    b = ctx.run(build, setup=setup, source=src, image="mirum/ubuntu-24.04")
-    ctx.run(test, setup=setup, depends=b, image="mirum/ubuntu-24.04")
-
-# Describe your project, what pipelines exist, and how to launch them.
-def project(ctx):
-    ctx.pipeline("build", fn=build_pipeline, watch=ctx.watch(events=["push"], manual=True))
+# A pipeline is a function that dispatches tasks. It is registered the
+# same way tasks are, with a list of triggers.
+def ci(pctx):
+    b = pctx.run(build, setup=setup, image="mirum/ubuntu-24.04")
+    pctx.run(test, setup=setup, depends=b, image="mirum/ubuntu-24.04")
+pipeline(ci, on=[git.push(branches=["main"])])
 ```
 
 ### Functions All the Way Down
 
-Mirum configuration is nested function composition in Starlark.
-`project` is the entry point and the only required function — it registers
-pipelines and the rules for "what, from where, and when to run."
+Mirum configuration is nested function composition in Starlark. There
+are two kinds of registered things — **tasks** and **pipelines** — and
+both are registered as side effects of top-level calls in the file:
 
-A pipeline is a function that imperatively executes tasks one by one and passes
-dependencies between them. A task's result can be used to launch further tasks,
-enabling dynamic task creation. You don't need separate syntax for
-"allow failure / retry / skip_if / matrix" — it's just if/for in Starlark.
+```python
+def build(tctx):
+    ...
+task(build)
 
-```
-# /.mirum/main.star — the entry point the server looks for
-
-project(ctx)  → event routing       "when to trigger"
-
-pipeline(ctx) → DAG of tasks        "what to run, on which platforms"
-
-task(ctx)     → scripts + artifacts  "how to build"
+def ci(pctx):
+    ...
+pipeline(ci, on=[git.push(branches=["main"])])
 ```
 
-Starlark supports imports, so splitting a large project works out of the box.
-The only requirement is a `.mirum/` directory at the repository root with `main.star`
-as the entry point. The internal structure of `.mirum/` is free-form.
-
-The fixed `.mirum/` path is not a convention but an architectural requirement.
-The server reads configuration via the forge contents API (`GET /repos/Org/repo/contents/.mirum/`),
-not via git clone. This allows: fetching only configuration files without accessing
-source code, filtering webhooks (push with no changes in `.mirum/` → skip re-eval),
-caching configuration by the directory's commit SHA.
-
-To reuse code both within and outside the project, starlark load is used.
+A pipeline is a function that imperatively dispatches tasks and passes
+dependencies between them. A task's result can be used to launch further
+tasks, enabling dynamic task creation. There is no separate syntax for
+"allow failure / retry / skip_if / matrix" — it is just `if`/`for` in
+Starlark.
 
 ```
-@mirum//   Standard library (services, apt, bazel helpers)
+Mirumfile      → the file the server looks for (one per repo, at root)
+
+triggers       → event routing          "when to run"
+                 (predicates passed via pipeline(..., on=[...]))
+
+pipeline(pctx) → DAG of tasks           "what to run, on which platforms"
+
+task(tctx)     → scripts + artifacts    "how to build"
+```
+
+Starlark supports imports, so splitting a large project works out of the
+box. The only requirement is a `Mirumfile` at the repository root.
+
+The server reads `Mirumfile` (and any files it transitively `load()`s)
+via the forge contents API, not via git clone. This allows: fetching
+only configuration files without accessing source code, filtering
+webhooks (push with no changes in `Mirumfile`'s closure → skip re-eval),
+caching configuration by file SHAs.
+
+To reuse code both within and outside the project, Starlark `load` is used.
+
+```
+@mirum//   Standard library (triggers, services, apt, bazel helpers)
 @pkg//     External packages (from deps.star, pinned by commit)
-//         Local files (relative to .mirum/ root)
+//         Local files (relative to repo root)
 ```
 
 ### Coroutine Eval: Dynamic DAGs
 
-Pipeline functions execute as coroutines. `ctx.run()` without accessing results
-is non-blocking — the server accumulates pending tasks. Accessing a result (`.output()`)
-is a yield point: the server dispatches all pending tasks, waits for the needed
-result, and resumes the pipeline function.
+Pipeline functions execute as coroutines. `pctx.run()` without accessing
+results is non-blocking — the server accumulates pending tasks.
+Accessing a result (`.output()`) is a yield point: the server dispatches
+all pending tasks, waits for the needed result, and resumes the pipeline
+function.
 
 ```python
-def build(ctx):
+def build(tctx):
     ...
+task(build)
 
-def discover_tests(ctx):
+def discover_tests(tctx):
     ...
+task(discover_tests)
 
-def run_test(ctx):
+def run_test(tctx, module):
     ...
+task(run_test)
 
-def pipeline(ctx):
-    src = ctx.source()  # where sources come from: git, mirum try, or a local directory
-
-    # All ctx.run() calls before the first .output() accumulate and run in parallel
+def ci(pctx):
+    # All pctx.run() calls before the first .output() accumulate and run in parallel
     builds = {}
     for os in ["linux", "mac"]:
-        builds[os] = ctx.run(build, source=src,
+        builds[os] = pctx.run(build,
             image="mirum/%s" % os, args={"os": os})
 
-    discovery = ctx.run(discover_tests, source=src,
-        image="mirum/linux")
+    discovery = pctx.run(discover_tests, image="mirum/linux")
 
     # Yield: server dispatches builds + discovery in parallel,
     # waits for discovery to complete, resumes with result
@@ -311,79 +212,85 @@ def pipeline(ctx):
 
     # Dynamic phase: use runtime data
     for module in test_modules:
-        ctx.run(run_test, args={"module": module},
+        pctx.run(run_test, args={"module": module},
             depends=list(builds.values()))
+pipeline(ci, on=[git.push(branches=["main"])])
 ```
 
-If a pipeline function never calls `.output()`, the entire DAG is built in
-a single pass. A static DAG is a special case of the dynamic model.
+If a pipeline function never calls `.output()`, the entire DAG is built
+in a single pass. A static DAG is a special case of the dynamic model.
 
-`mirum eval` executes the pipeline function locally without dispatching tasks.
-For static DAGs it prints the full graph. For dynamic DAGs — everything up to
-the first yield point, marked "depends on runtime data beyond this point."
+`mirum eval` executes the pipeline function locally without dispatching
+tasks. For static DAGs it prints the full graph. For dynamic DAGs —
+everything up to the first yield point, marked "depends on runtime data
+beyond this point."
 
 ### Example: Everything in One File
 
 ```python
-# /.mirum/main.star — complete CI
+# /Mirumfile — complete CI
 
-# ctx.run takes an optional setup function to indicate which steps
+load("@mirum//on.star", "git")
+
+# pctx.run takes an optional setup function to indicate which steps
 # are environment setup only, so the resulting image can be cached
-def setup(ctx):
-    ctx.shell("apt-get update && apt-get install -y cargo")
+def setup(tctx):
+    tctx.shell("apt-get update && apt-get install -y cargo")
 
-def build(ctx):
-    ctx.checkout()
-    ctx.shell("cargo build --release")
-    ctx.upload("target/release/myapp", artifact="bin")
+def build(tctx):
+    tctx.checkout()
+    tctx.shell("cargo build --release")
+    tctx.upload("target/release/myapp", artifact="bin")
+task(build)
 
-def test(ctx):
+def test(tctx):
     # test knows nothing about build — only that it needs an artifact.
     # that artifact could have been built right here, come from cache
     # or a registry, or even uploaded from a developer's laptop
-    ctx.download("bin", dest=".")
-    ctx.shell("cargo test")
+    tctx.download("bin", dest=".")
+    tctx.shell("cargo test")
+task(test)
 
-def ci(ctx):
-    src = ctx.source()
-    b = ctx.run(build, setup=setup, source=src, image="mirum/ubuntu-24.04")
-    ctx.run(test, setup=setup, depends=b, image="mirum/ubuntu-24.04")
-
-def project(ctx):
-    ctx.pipeline("ci", fn=ci, watch=ctx.watch(events=["push"]))
+def ci(pctx):
+    b = pctx.run(build, setup=setup, image="mirum/ubuntu-24.04")
+    pctx.run(test, setup=setup, depends=b, image="mirum/ubuntu-24.04")
+pipeline(ci, on=[git.push(branches=["main"])])
 ```
 
 ### Example: Cross-Platform Project
 
 ```python
 # tasks/setup.star
-def cpp_toolchain(ctx):
-    if ctx.os == "linux":
-        ctx.shell("apt-get update && apt-get install -y cmake ninja-build")
-    elif ctx.os == "freebsd":
-        ctx.shell("pkg install -y cmake ninja")
-    elif ctx.os == "windows":
-        ctx.shell("choco install -y cmake ninja visualstudio2022-workload-vctools")
-    elif ctx.os == "macos":
-        ctx.shell("brew install cmake ninja")
+def cpp_toolchain(tctx):
+    if tctx.os == "linux":
+        tctx.shell("apt-get update && apt-get install -y cmake ninja-build")
+    elif tctx.os == "freebsd":
+        tctx.shell("pkg install -y cmake ninja")
+    elif tctx.os == "windows":
+        tctx.shell("choco install -y cmake ninja visualstudio2022-workload-vctools")
+    elif tctx.os == "macos":
+        tctx.shell("brew install cmake ninja")
 
 # tasks/build.star
-def build(ctx):
-    ctx.checkout()
-    if ctx.os == "windows":
-        ctx.shell('cmake -G "Visual Studio 17 2022" -B build .')
-    elif ctx.os == "macos":
-        ctx.shell("cmake -B build -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 .")
+def build(tctx):
+    tctx.checkout()
+    if tctx.os == "windows":
+        tctx.shell('cmake -G "Visual Studio 17 2022" -B build .')
+    elif tctx.os == "macos":
+        tctx.shell("cmake -B build -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 .")
     else:
-        ctx.shell("cmake -B build .")
-    ctx.shell("cmake --build build --config Release")
-    ctx.upload("build/out/*", artifact="pkg")
+        tctx.shell("cmake -B build .")
+    tctx.shell("cmake --build build --config Release")
+    tctx.upload("build/out/*", artifact="pkg")
+task(build)
 
-def publish(ctx):
-    ctx.download("pkg", dest="release/")
-    ctx.shell("gh release create $TAG release/* --generate-notes")
+def publish(tctx):
+    tctx.download("pkg", dest="release/")
+    tctx.shell('gh release create "$TAG" release/* --generate-notes')
+task(publish)
 
-# pipelines/release.star
+# /Mirumfile
+load("@mirum//on.star", "git")
 load("//tasks/setup.star", "cpp_toolchain")
 load("//tasks/build.star", "build", "publish")
 
@@ -403,31 +310,24 @@ PLATFORMS = [
     ("freebsd", "amd64"),
 ]
 
-def pipeline(ctx):
-    src = ctx.source(ref=ctx.event.tag)
-
+def release(pctx):
     # Build: loop over platforms, each task gets its own handle
     builds = {}
     for os, arch in PLATFORMS:
-        builds[(os, arch)] = ctx.run(build,
+        builds[(os, arch)] = pctx.run(build,
             setup=cpp_toolchain,
-            source=src,
             image=IMAGES[os],
             args={"os": os, "arch": arch})
 
     # Publish: fan-in, waits for all builds
-    ctx.run(publish, depends=list(builds.values()))
-
-# .mirum/main.star
-def project(ctx):
-    ctx.pipeline("release", file="pipelines/release.star",
-        watch=ctx.watch(events=["tag"], pattern="v*"))
+    pctx.run(publish, depends=list(builds.values()))
+pipeline(release, on=[git.tag(names=["v*"])])
 ```
 
 The pipeline decides WHERE (image, platforms). Setup decides WITH WHAT
 (toolchain, cached snapshot). The task decides HOW (checkout, build, upload).
-Tasks don't know what platform they're running on — `ctx.os` and `ctx.arch` are
-injected by the pipeline.
+Tasks don't know what platform they're running on — `tctx.os` and `tctx.arch`
+are injected by the pipeline.
 
 ## Images
 
@@ -477,7 +377,7 @@ Layer 0: Base image (from OCI registry)
   Golden (Mirum-maintained) or organization (external).
   Worker downloads, converts to hypervisor format, caches locally.
 
-Layer 1: Setup (function from ctx.run(setup=...))
+Layer 1: Setup (function from pctx.run(setup=...))
   Declared in the pipeline. Worker executes, takes a snapshot.
   Cache is local, best-effort, evicted by LRU.
 
@@ -487,24 +387,26 @@ Layer 2: Ephemeral overlay
 
 ### Setup as a Function
 
-The pipeline passes two functions to `ctx.run()`:
+The pipeline passes two functions to `pctx.run()`:
 `setup` (optional) and the main task. The image is also specified in the pipeline:
 
 ```python
-def cpp_setup(ctx):
-    if ctx.os == "linux":
-        ctx.shell("apt-get update && apt-get install -y cmake ninja-build")
-    elif ctx.os == "freebsd":
-        ctx.shell("pkg install -y cmake ninja")
+def cpp_setup(tctx):
+    if tctx.os == "linux":
+        tctx.shell("apt-get update && apt-get install -y cmake ninja-build")
+    elif tctx.os == "freebsd":
+        tctx.shell("pkg install -y cmake ninja")
 
-def build(ctx):
-    ctx.checkout()
-    ctx.shell("cmake -B build . && cmake --build build")
+def build(tctx):
+    tctx.checkout()
+    tctx.shell("cmake -B build . && cmake --build build")
+task(build)
 
-def pipeline(ctx):
-    ctx.run(build, setup=cpp_setup, source=ctx.source(),
+def ci(pctx):
+    pctx.run(build, setup=cpp_setup,
         image="mirum/ubuntu-24.04",
         args={"os": "linux"})
+pipeline(ci, on=[git.push(branches=["main"])])
 ```
 
 The worker hashes `(image_digest, setup_function_hash, os, arch)`.
@@ -515,19 +417,19 @@ Setup is an ordinary Starlark function, composable via `load()`:
 
 ```python
 # @pkg//acme/setup.star
-def cpp_toolchain(ctx):
-    if ctx.os == "linux":
-        ctx.shell("apt-get update && apt-get install -y cmake ninja-build")
-    elif ctx.os == "windows":
-        ctx.shell("choco install -y cmake ninja")
+def cpp_toolchain(tctx):
+    if tctx.os == "linux":
+        tctx.shell("apt-get update && apt-get install -y cmake ninja-build")
+    elif tctx.os == "windows":
+        tctx.shell("choco install -y cmake ninja")
 ```
 
 ```python
 load("@pkg//acme/setup.star", "cpp_toolchain")
 
-def pipeline(ctx):
+def ci(pctx):
     for os in ["linux", "windows"]:
-        ctx.run(build, setup=cpp_toolchain, source=src,
+        pctx.run(build, setup=cpp_toolchain,
             image=IMAGES[os], args={"os": os})
 ```
 
@@ -535,7 +437,7 @@ One `cpp_toolchain` across the entire organization — one hash — one snapshot
 
 Three levels, cleanly separated:
 
-- **Pipeline**: WHERE (image, platforms, source)
+- **Pipeline**: WHERE (image, platforms)
 - **Setup**: WITH WHAT (toolchain, dependencies — cached snapshot)
 - **Task**: HOW (checkout, build, test, upload)
 
@@ -543,8 +445,8 @@ Organizations that need a fully pre-built image can publish it to any OCI regist
 using external tooling and reference it directly:
 
 ```python
-# not need setup for preconfigured image
-ctx.run(build, source=src, image="acme-registry.com/ci-base:latest")
+# no need for setup with a preconfigured image
+pctx.run(build, image="acme-registry.com/ci-base:latest")
 ```
 
 ### Golden Images
@@ -590,7 +492,7 @@ This is a standard Starlark that, although it comes with an agent,
 doesn't require any additional APIs (see the Bazel vs Buck configurations).
 Users can read, fork, or write their own.
 
-Starlark sees capabilities via `ctx.worker.has("docker")`.
+Starlark sees capabilities via `tctx.worker.has("docker")`.
 The stdlib adapts. No hidden magic — the code is readable.
 
 The dividing principle: if an optimization can be applied without changing
@@ -602,11 +504,12 @@ Checks worker capabilities and adapts:
 ```python
 load("@mirum//services", "service")
 
-def test(ctx):
+def test(tctx):
     # docker on the worker? → sidecar container
     # no docker? → install and run inside the VM
-    service(ctx, "postgres", image="postgres:16", port=5432)
-    ctx.shell("make test")
+    service(tctx, "postgres", image="postgres:16", port=5432)
+    tctx.shell("make test")
+task(test)
 ```
 
 Workers declare capabilities on registration:

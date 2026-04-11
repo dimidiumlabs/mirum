@@ -7,8 +7,6 @@ version = 1
 path = [
   ".mailmap",
   "CLA.md",
-  "CONCEPT.md",
-  "README.md",
   "VERSION",
   "cmd/mirum-server/web/*.json",
   "go.mod",
@@ -19,3 +17,11 @@ path = [
 ]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov <me@govorov.online>"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+[[annotations]]
+path = [
+  "README.md",
+  "docs/**.md",
+]
+SPDX-FileCopyrightText = "2026 Nikolay Govorov <me@govorov.online>"
+SPDX-License-Identifier = "CC-BY-4.0"
