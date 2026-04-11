@@ -231,8 +231,10 @@ tasks:
       - mkdir -p {{.BUILD_DIR}}
       - go build -o {{.BUILD_DIR}}/mirum-server-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum-server
       - go build -o {{.BUILD_DIR}}/mirum-worker-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum-worker
+      - go build -o {{.BUILD_DIR}}/mirum-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum
       - cp {{.BUILD_DIR}}/mirum-server-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirum-server
       - cp {{.BUILD_DIR}}/mirum-worker-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirum-worker
+      - cp {{.BUILD_DIR}}/mirum-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirum
 
   run:
     desc: Build and run mirum-server against the dev environment

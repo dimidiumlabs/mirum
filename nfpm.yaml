@@ -28,6 +28,11 @@ contents:
     file_info:
       mode: 0755
 
+  - src: build/mirum
+    dst: /usr/local/bin/mirum
+    file_info:
+      mode: 0755
+
   - src: pkg/server/config.yaml
     dst: /etc/mirum/server/config.yaml
     type: config|noreplace
