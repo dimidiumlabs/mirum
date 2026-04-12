@@ -30,7 +30,6 @@ type server struct {
 // Close releases resources owned by the server. Call exactly once, after
 // all HTTP servers have finished Shutdown.
 func (s *server) Close() {
-	close(s.queue)
 	s.db.Close()
 }
 
@@ -51,24 +50,27 @@ func (s *server) PurgeSessions(ctx context.Context) {
 	}
 }
 
-func (s *server) enqueue(ev *forges.PushEvent) string {
-	s.taskCounter.Add(1)
-	id := fmt.Sprintf("task-%d", s.taskCounter.Load())
+func (s *server) enqueue(ctx context.Context, ev *forges.PushEvent) (string, error) {
+	id := fmt.Sprintf("task-%d", s.taskCounter.Add(1))
 
 	slog.Info("push", "repo", ev.Owner+"/"+ev.Repo, "branch", ev.Branch, "sha", ev.SHA[:8], "task", id)
 
 	s.tasks.Store(id, ev)
-	_ = s.forge.SetStatus(context.Background(), ev, forges.StatusPending, "Queued")
+	_ = s.forge.SetStatus(ctx, ev, forges.StatusPending, "Queued")
 
-	s.queue <- &wirepb.Task{
+	select {
+	case s.queue <- &wirepb.Task{
 		Id:           id,
 		CloneUrl:     s.forge.AuthURL(ev.CloneURL),
 		Branch:       ev.Branch,
 		Sha:          ev.SHA,
 		RepoFullName: ev.Owner + "/" + ev.Repo,
+	}:
+		return id, nil
+	case <-ctx.Done():
+		s.tasks.Delete(id)
+		return "", ctx.Err()
 	}
-
-	return id
 }
 
 func (s *server) complete(ctx context.Context, taskID string, success bool, errMsg string) error {

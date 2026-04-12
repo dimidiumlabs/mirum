@@ -216,7 +216,10 @@ func (h *webHandler) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.srv.enqueue(ev)
+	if _, err := h.srv.enqueue(r.Context(), ev); err != nil {
+		http.Error(w, "server shutting down", http.StatusServiceUnavailable)
+		return
+	}
 	w.WriteHeader(http.StatusAccepted)
 }
 
