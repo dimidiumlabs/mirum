@@ -6,11 +6,13 @@ package executor
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 
 	"go.starlark.net/starlark"
+	"go.starlark.net/syntax"
 )
 
 const entry = ".mirum/project.star"
@@ -78,7 +80,11 @@ func Run(cloneURL, branch string) error {
 	if err != nil {
 		return fmt.Errorf("create workdir: %w", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			slog.Warn("executor: cleanup failed", "dir", dir, "err", err)
+		}
+	}()
 
 	if out, err := RunCmd(dir, "git", "clone", "--depth=1", "--branch", branch, cloneURL, "."); err != nil {
 		return fmt.Errorf("git clone: %s: %w", out, err)
@@ -89,7 +95,7 @@ func Run(cloneURL, branch string) error {
 
 func runStarlark(dir string) error {
 	thread := &starlark.Thread{Name: "mirum"}
-	globals, err := starlark.ExecFile(thread, filepath.Join(dir, entry), nil, nil)
+	globals, err := starlark.ExecFileOptions(&syntax.FileOptions{}, thread, filepath.Join(dir, entry), nil, nil)
 	if err != nil {
 		return err
 	}

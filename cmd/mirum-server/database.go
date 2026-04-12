@@ -168,7 +168,11 @@ func (db *DB) apicall(ctx context.Context, actor Actor, access, validate, doit f
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			slog.Error("rollback failed", "err", err)
+		}
+	}()
 
 	if _, err := tx.Exec(ctx,
 		`SELECT set_config('app.user_id', $1, true),

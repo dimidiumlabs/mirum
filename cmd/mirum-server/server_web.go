@@ -281,7 +281,9 @@ func (h *webHandler) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if c, err := r.Cookie(sessionCookie); err == nil {
-		h.srv.db.UserSessionDelete(r.Context(), SystemActor(), c.Value)
+		if err := h.srv.db.UserSessionDelete(r.Context(), SystemActor(), c.Value); err != nil {
+			slog.Warn("logout: failed to delete session", "err", err)
+		}
 	}
 	clearCookie(w, sessionCookie)
 	clearCookie(w, csrfCookie)

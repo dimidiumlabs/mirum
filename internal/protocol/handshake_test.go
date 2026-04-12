@@ -67,7 +67,9 @@ func TestLoadPrivateKey_NotFound(t *testing.T) {
 
 func TestLoadPrivateKey_NotPEM(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bad.key")
-	os.WriteFile(path, []byte("not pem"), 0o600)
+	if err := os.WriteFile(path, []byte("not pem"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := LoadPrivateKey(path)
 	if err == nil {
@@ -78,7 +80,9 @@ func TestLoadPrivateKey_NotPEM(t *testing.T) {
 func TestLoadPrivateKey_WrongKeyType(t *testing.T) {
 	data := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("garbage")})
 	path := filepath.Join(t.TempDir(), "bad.key")
-	os.WriteFile(path, data, 0o600)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := LoadPrivateKey(path)
 	if err == nil {

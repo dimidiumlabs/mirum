@@ -37,8 +37,10 @@ tasks:
     deps: [proto]
     cmds:
       - reuse lint
-      - go vet ./...
       - gofmt -l . | grep . && exit 1 || true
+      - go vet ./...
+      - go tool golangci-lint run ./...
+      - go tool govulncheck ./...
 
   signof:
     desc: Verifies that the author is known and has signed the CLA
@@ -311,6 +313,8 @@ tasks:
   test:
     desc: Run all tests
     deps: [build, web:size]
+    env:
+      CGO_ENABLED: "1" # required for -race
     cmds:
       - go test -race -count=1 ./...
 

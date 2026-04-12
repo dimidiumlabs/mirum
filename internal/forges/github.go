@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -92,7 +93,11 @@ func (g *GitHub) SetStatus(ctx context.Context, ev *PushEvent, status Status, de
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("github: close response body", "err", err)
+		}
+	}()
 
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
