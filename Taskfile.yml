@@ -34,13 +34,20 @@ tasks:
 
   lint:
     desc: Run static checks
-    deps: [proto]
+    deps: [proto, web:lint]
     cmds:
       - reuse lint
       - gofmt -l . | grep . && exit 1 || true
       - go vet ./...
       - go tool golangci-lint run ./...
       - go tool govulncheck ./...
+
+  web:lint:
+    desc: Lint and check formatting of the frontend
+    dir: cmd/mirum-server/web
+    deps: [web:install, proto]
+    cmds:
+      - npm run lint
 
   signof:
     desc: Verifies that the author is known and has signed the CLA

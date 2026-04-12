@@ -3,33 +3,66 @@ Copyright (c) 2026 Nikolay Govorov
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="view-transition" content="same-origin">
-  <title>Mirum</title>
-  {{- range .Preloads}}
-  <link rel="modulepreload" href="{{.Href}}"{{if .Integrity}} integrity="{{.Integrity}}"{{end}}>
-  {{- end}}
-  {{- range .CSS}}
-  <link rel="stylesheet" href="{{.Href}}"{{if .Integrity}} integrity="{{.Integrity}}"{{end}}>
-  {{- end}}
-</head>
-<body>
-  <div id="app"></div>
-  <noscript>
-    <p style="max-width:32rem;margin:4rem auto;padding:1rem;font:14px system-ui,sans-serif;text-align:center">
-      Mirum requires JavaScript to run. Please enable it in your browser.
-    </p>
-  </noscript>
-  <script type="application/json" id="__DATA__">{{.DataJSON}}</script>
-  {{- if .Preamble}}
-  <script type="module">{{.Preamble}}</script>
-  {{- end}}
-  {{- range .Scripts}}
-  <script type="module" src="{{.Href}}"{{if .Integrity}} integrity="{{.Integrity}}"{{end}}></script>
-  {{- end}}
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="view-transition" content="same-origin" />
+    <title>Mirum</title>
+    {{- range .Preloads}}
+    <link
+      rel="modulepreload"
+      href="{{.Href}}"
+      {{if
+      .Integrity}}
+      integrity="{{.Integrity}}"
+      {{end}}
+    />
+    {{- end}} {{- range .CSS}}
+    <link
+      rel="stylesheet"
+      href="{{.Href}}"
+      {{if
+      .Integrity}}
+      integrity="{{.Integrity}}"
+      {{end}}
+    />
+    {{- end}}
+  </head>
+  <body>
+    <div id="app"></div>
+    <noscript>
+      <p
+        style="
+          max-width: 32rem;
+          margin: 4rem auto;
+          padding: 1rem;
+          font:
+            14px system-ui,
+            sans-serif;
+          text-align: center;
+        "
+      >
+        Mirum requires JavaScript to run. Please enable it in your browser.
+      </p>
+    </noscript>
+    <script type="application/json" id="__DATA__">
+      {{.DataJSON}}
+    </script>
+    {{- if .Preamble}}
+    <script type="module">
+      {{.Preamble}}
+    </script>
+    {{- end}} {{- range .Scripts}}
+    <script
+      type="module"
+      src="{{.Href}}"
+      {{if
+      .Integrity}}
+      integrity="{{.Integrity}}"
+      {{end}}
+    ></script>
+    {{- end}}
+  </body>
 </html>

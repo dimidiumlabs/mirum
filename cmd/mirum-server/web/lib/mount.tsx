@@ -1,24 +1,29 @@
 // Copyright (c) 2026 Nikolay Govorov
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { StrictMode, type ComponentType } from "react"
-import { createRoot } from "react-dom/client"
+import { StrictMode, type ComponentType } from "react";
+import { createRoot } from "react-dom/client";
 
 export function getInitialData<T>(): T {
-  const el = document.getElementById("__DATA__")
+  const el = document.getElementById("__DATA__");
   if (!el?.textContent) {
-    throw new Error("missing __DATA__ script tag")
+    throw new Error("missing __DATA__ script tag");
   }
 
-  return JSON.parse(el.textContent) as T
+  return JSON.parse(el.textContent) as T;
 }
 
 export function mountPage<P extends object>(Component: ComponentType<P>) {
-  const props = getInitialData<P>()
+  const props = getInitialData<P>();
 
-  createRoot(document.getElementById("app")!).render(
+  const root = document.getElementById("app");
+  if (!root) {
+    throw new Error("missing #app element");
+  }
+
+  createRoot(root).render(
     <StrictMode>
       <Component {...props} />
     </StrictMode>,
-  )
+  );
 }
