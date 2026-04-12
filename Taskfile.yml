@@ -15,82 +15,26 @@ vars:
   DEV_DB: mirum-local-dev
   DIST_DIR: build/dist
   BUILD_DIR: build
-  TARGETS: >-
-    linux-amd64 linux-arm64 linux-riscv64 linux-ppc64le linux-loong64 linux-s390x
-    darwin-amd64 darwin-arm64
-    windows-amd64 windows-arm64
-    freebsd-amd64 freebsd-arm64 freebsd-riscv64
-    openbsd-amd64 openbsd-arm64
-    netbsd-amd64 netbsd-arm64
   LINUX_PKG_TARGETS: amd64 arm64 riscv64 ppc64le loong64 s390x
 
 tasks:
-  ci:
-    desc: Run all CI checks
-    cmds:
-      - task: signof
-      - task: lint
-      - task: test
-
-  lint:
-    desc: Run static checks
-    deps: [proto, web:lint]
-    cmds:
-      - reuse lint
-      - gofmt -l . | grep . && exit 1 || true
-      - go vet ./...
-      - go tool golangci-lint run ./...
-      - go tool govulncheck ./...
-
-  web:lint:
-    desc: Lint and check formatting of the frontend
+  # Production build pipeline
+  web:install:
+    desc: Install frontend dependencies
+    run: once
     dir: cmd/mirum-server/web
-    deps: [web:install, proto]
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
     cmds:
-      - npm run lint
-
-  signof:
-    desc: Verifies that the author is known and has signed the CLA
-    cmds:
-      - |
-        ALLOWLIST="Nikolay Govorov|github-actions\\[bot\\]"
-
-        bad=0
-        for sha in $(git log --no-merges --format=%H); do
-          author=$(git log -1 --format='%an' "$sha")
-          if echo "$author" | grep -qP "^($ALLOWLIST)$"; then
-            continue
-          fi
-
-          email=$(git log -1 --format='%ae' "$sha")
-          expected="${author} <${email}>"
-          if ! git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qF "$expected"; then
-            echo "Commit ${sha:0:8} by ${expected} is missing a valid Signed-off-by"
-            bad=1
-          fi
-        done
-
-        if [ "$bad" -eq 1 ]; then
-          echo "All commits must be signed off (git commit -s). See CLA.md"
-          exit 1
-        fi
-
-        # Check that all authors and committers are in .mailmap
-        missing=0
-        for email in $(git log --no-merges --format='%ae%n%ce' | sort -u); do
-          if ! grep -v '^#' .mailmap | grep -qF "<${email}>"; then
-            echo "Email <${email}> is not in .mailmap"
-            missing=1
-          fi
-        done
-
-        if [ "$missing" -eq 1 ]; then
-          echo "All contributors must be listed in .mailmap. See README.md"
-          exit 1
-        fi
+      - npm ci
 
   proto:
     desc: Generate ConnectRPC code from proto files
+    run: once
+    deps: [web:install]
     sources:
       - internal/protocol/proto/*.proto
       - internal/protocol/proto/buf.gen.yaml
@@ -117,19 +61,9 @@ tasks:
         export const file_buf_validate_validate: GenFile = /*@__PURE__*/ fileDesc("")
         EOF
 
-  web:install:
-    desc: Install frontend dependencies
-    dir: cmd/mirum-server/web
-    sources:
-      - package.json
-      - package-lock.json
-    generates:
-      - node_modules/.package-lock.json
-    cmds:
-      - npm ci
-
   web:build:
     desc: Build the frontend into cmd/mirum-server/static
+    run: once
     dir: cmd/mirum-server/web
     deps: [web:install, proto]
     sources:
@@ -147,123 +81,25 @@ tasks:
     cmds:
       - npm run build
 
-  web:size:
-    desc: Check frontend bundle size budgets
-    dir: cmd/mirum-server/web
-    deps: [web:build]
+  licenses:
+    desc: Regenerate third-party license manifest (build/licenses.json)
+    run: once
+    deps: [proto, web:build]
     sources:
-      - ../static/assets/*
-      - package.json
-    cmds:
-      - npm run size
-
-  web:dev:
-    desc: Run Vite dev server (use with `go run -tags dev ./cmd/mirum-server`)
-    dir: cmd/mirum-server/web
-    deps: [web:install, proto]
-    prefix: vite
-    env:
-      NO_COLOR: "1"
-      CI: "true"
-    cmds:
-      - npm run dev
-
-  devenv:keys:
-    desc: Generate dev TLS cert and worker key pair
-    status:
-      - test -f dev/server.crt
-      - test -f dev/worker.key
-      - test -f dev/worker.pub
-    cmds:
-      - mkdir -p dev
-      - >-
-        test -f dev/server.crt ||
-        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1
-        -keyout dev/server.key -out dev/server.crt
-        -days 365 -nodes -subj "/CN=mirum-server"
-        -addext "subjectAltName=DNS:mirum-server,DNS:localhost"
-      - >-
-        test -f dev/worker.key ||
-        openssl genpkey -algorithm ed25519 -out dev/worker.key
-      - >-
-        test -f dev/worker.pub ||
-        openssl pkey -in dev/worker.key -pubout -out dev/worker.pub
-
-  devenv:config:
-    desc: Write dev/mirum-server.yaml if missing
-    status:
-      - test -f dev/mirum-server.yaml
-    cmds:
-      - mkdir -p dev
-      - |
-        cat > dev/mirum-server.yaml <<EOF
-        web_addr: ":3000"
-        grpc_addr: ":2026"
-        admin_socket: "/tmp/mirum-admin.sock"
-        database_uri: "postgres://{{.DEV_DB}}:{{.DEV_DB}}@localhost:5432/{{.DEV_DB}}?sslmode=disable"
-        pepper: "dev-pepper"
-        webhook_secret: "dev-secret"
-        grpc_tls:
-          cert: "dev/server.crt"
-          key: "dev/server.key"
-        EOF
-
-  devenv:db:local:
-    internal: true
-    desc: Create the dev postgres role and database on a local install (needs sudo)
-    status:
-      - '[ "{{.DOCKER}}" = "true" ] || PGPASSWORD={{.DEV_DB}} psql -h localhost -U {{.DEV_DB}} -d {{.DEV_DB}} -c "SELECT 1" >/dev/null 2>&1'
-    cmds:
-      - |
-        sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{.DEV_DB}}'" | grep -q 1 ||
-          sudo -u postgres psql -c "CREATE ROLE \"{{.DEV_DB}}\" LOGIN PASSWORD '{{.DEV_DB}}'"
-      - |
-        sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{.DEV_DB}}'" | grep -q 1 ||
-          sudo -u postgres psql -c "CREATE DATABASE \"{{.DEV_DB}}\" OWNER \"{{.DEV_DB}}\""
-
-  devenv:db:docker:
-    internal: true
-    desc: Start a Postgres Docker container for dev
-    status:
-      - '[ "{{.DOCKER}}" != "true" ] || docker exec {{.DEV_DB}} pg_isready -U {{.DEV_DB}} >/dev/null 2>&1 || nc -z localhost 5432 2>/dev/null'
-    cmds:
-      - docker run -d
-        --name {{.DEV_DB}}
-        -e POSTGRES_USER={{.DEV_DB}}
-        -e POSTGRES_PASSWORD={{.DEV_DB}}
-        -e POSTGRES_DB={{.DEV_DB}}
-        -p 5432:5432
-        postgres:18
-      - |
-        echo "Waiting for postgres..."
-        until docker exec {{.DEV_DB}} pg_isready -U {{.DEV_DB}} >/dev/null 2>&1; do
-          sleep 1
-        done
-
-  devenv:db:
-    desc: "Create the dev postgres role and database (set DOCKER=true for Docker)"
-    deps: [devenv:db:local, devenv:db:docker]
-
-  devenv:
-    desc: Provision a full local dev environment (keys, config, database)
-    deps: [devenv:keys, devenv:config, devenv:db]
-
-  dev:server:
-    desc: Build mirum-server with -tags dev and run it against the dev environment
-    deps: [proto, devenv]
-    prefix: mirum-server
+      - go.sum
+      - cmd/mirum-server/web/package-lock.json
+      - internal/licensegen/**/*.go
+      - LICENSES.go
+      - LICENSES/*.txt
+    generates:
+      - build/licenses.json
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -tags dev -o {{.BUILD_DIR}}/mirum-server ./cmd/mirum-server
-      - "{{.BUILD_DIR}}/mirum-server daemon --config dev/mirum-server.yaml"
-
-  dev:
-    desc: Run Vite dev server and mirum-server together (HMR-enabled)
-    deps: [web:dev, dev:server]
+      - go run -tags licensegen ./internal/licensegen -out {{.BUILD_DIR}}/licenses.json
 
   build:
     desc: "Build binaries (override GOOS/GOARCH for cross-compilation)"
-    deps: [proto, web:build]
+    deps: [proto, licenses, web:build]
     vars:
       GOOS: { sh: "echo ${GOOS:-$(go env GOOS)}" }
       GOARCH: { sh: "echo ${GOARCH:-$(go env GOARCH)}" }
@@ -281,9 +117,17 @@ tasks:
   cross:
     desc: Cross-compile and archive binaries for all supported platforms
     cmds:
-      - |
-        mkdir -p {{.DIST_DIR}}
-        for target in {{.TARGETS}}; do
+      - mkdir -p {{.DIST_DIR}}
+      - for: [
+          darwin-amd64, darwin-arm64,
+          windows-amd64, windows-arm64,
+          netbsd-amd64, netbsd-arm64,
+          openbsd-amd64, openbsd-arm64,
+          freebsd-amd64, freebsd-arm64, freebsd-riscv64,
+          linux-amd64, linux-arm64, linux-riscv64, linux-ppc64le, linux-loong64, linux-s390x,
+        ]
+        cmd: |
+          target="{{ .ITEM }}"
           os="${target%%-*}"
           arch="${target#*-}"
           task build GOOS="$os" GOARCH="$arch"
@@ -305,25 +149,7 @@ tasks:
             tar -czf "{{.DIST_DIR}}/mirum-${target}.tar.gz" -C "$staging" .
           fi
           rm -rf "$staging"
-        done
       - cd {{.DIST_DIR}} && sha256sum *.tar.gz *.zip > SHA256SUMS
-
-  run:
-    desc: Build and run mirum-server against the dev environment
-    deps: [build, devenv]
-    vars:
-      GOOS: { sh: go env GOOS }
-      GOARCH: { sh: go env GOARCH }
-    cmds:
-      - "{{.BUILD_DIR}}/mirum-server-{{.GOOS}}-{{.GOARCH}} daemon --config dev/mirum-server.yaml"
-
-  test:
-    desc: Run all tests
-    deps: [build, web:size]
-    env:
-      CGO_ENABLED: "1" # required for -race
-    cmds:
-      - go test -race -count=1 ./...
 
   package:
     desc: Cross-compile all platforms and build deb/rpm packages for Linux
@@ -373,31 +199,6 @@ tasks:
         done
 
         printf 'VERSION={{.VERSION}}\nCHANNEL={{.CHANNEL}}\n' > {{.DIST_DIR}}/build.env
-
-  publish:release:
-    desc: Create or update a GitHub Release
-    requires:
-      vars: [CHANNEL, VERSION]
-    cmds:
-      - |
-        if [ "{{.CHANNEL}}" = "stable" ]; then
-          TAG="v{{.VERSION}}"
-          NAME="{{.VERSION}}"
-        else
-          TAG="nightly"
-          NAME="nightly"
-          git tag -f nightly
-          git push origin --force tag nightly
-          for asset in $(gh release view nightly --json assets --jq '.assets[].name' 2>/dev/null || true); do
-            gh release delete-asset nightly "$asset" --yes
-          done
-        fi
-
-        gh release create "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS \
-          --title "$NAME" \
-          $( [ "{{.CHANNEL}}" = "nightly" ] && echo "--prerelease" ) \
-          --notes "**Version**: {{.VERSION}}" \
-          || gh release upload "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS --clobber
 
   publish:repos:
     desc: Publish packages to APT and RPM repositories on S3
@@ -485,5 +286,219 @@ tasks:
         REPOEOF
 
         rclone copy rpm-repo/ "s3:{{.S3_BUCKET}}/rpm/$CHANNEL/" --progress
+
+  publish:release:
+    desc: Create or update a GitHub Release
+    requires:
+      vars: [CHANNEL, VERSION]
+    cmds:
+      - |
+        if [ "{{.CHANNEL}}" = "stable" ]; then
+          TAG="v{{.VERSION}}"
+          NAME="{{.VERSION}}"
+        else
+          TAG="nightly"
+          NAME="nightly"
+          git tag -f nightly
+          git push origin --force tag nightly
+          for asset in $(gh release view nightly --json assets --jq '.assets[].name' 2>/dev/null || true); do
+            gh release delete-asset nightly "$asset" --yes
+          done
+        fi
+
+        gh release create "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS \
+          --title "$NAME" \
+          $( [ "{{.CHANNEL}}" = "nightly" ] && echo "--prerelease" ) \
+          --notes "**Version**: {{.VERSION}}" \
+          || gh release upload "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS --clobber
+
+  # Local dev env
+  devenv:config:
+    desc: Write dev/mirum-server.yaml if missing
+    status:
+      - test -f dev/mirum-server.yaml
+    cmds:
+      - mkdir -p dev
+      - |
+        cat > dev/mirum-server.yaml <<EOF
+        web_addr: ":3000"
+        grpc_addr: ":2026"
+        admin_socket: "/tmp/mirum-admin.sock"
+        database_uri: "postgres://{{.DEV_DB}}:{{.DEV_DB}}@localhost:5432/{{.DEV_DB}}?sslmode=disable"
+        pepper: "dev-pepper"
+        webhook_secret: "dev-secret"
+        grpc_tls:
+          cert: "dev/server.crt"
+          key: "dev/server.key"
+        EOF
+
+  devenv:keys:
+    desc: Generate dev TLS cert and worker key pair
+    status:
+      - test -f dev/server.crt
+      - test -f dev/worker.key
+      - test -f dev/worker.pub
+    cmds:
+      - mkdir -p dev
+      - >-
+        test -f dev/server.crt ||
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1
+        -keyout dev/server.key -out dev/server.crt
+        -days 365 -nodes -subj "/CN=mirum-server"
+        -addext "subjectAltName=DNS:mirum-server,DNS:localhost"
+      - >-
+        test -f dev/worker.key ||
+        openssl genpkey -algorithm ed25519 -out dev/worker.key
+      - >-
+        test -f dev/worker.pub ||
+        openssl pkey -in dev/worker.key -pubout -out dev/worker.pub
+
+  devenv:db:local:
+    internal: true
+    desc: Create the dev postgres role and database on a local install (needs sudo)
+    status:
+      - '[ "{{.DOCKER}}" = "true" ] || PGPASSWORD={{.DEV_DB}} psql -h localhost -U {{.DEV_DB}} -d {{.DEV_DB}} -c "SELECT 1" >/dev/null 2>&1'
+    cmds:
+      - |
+        sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{.DEV_DB}}'" | grep -q 1 ||
+          sudo -u postgres psql -c "CREATE ROLE \"{{.DEV_DB}}\" LOGIN PASSWORD '{{.DEV_DB}}'"
+      - |
+        sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{.DEV_DB}}'" | grep -q 1 ||
+          sudo -u postgres psql -c "CREATE DATABASE \"{{.DEV_DB}}\" OWNER \"{{.DEV_DB}}\""
+
+  devenv:db:docker:
+    internal: true
+    desc: Start a Postgres Docker container for dev
+    status:
+      - '[ "{{.DOCKER}}" != "true" ] || docker exec {{.DEV_DB}} pg_isready -U {{.DEV_DB}} >/dev/null 2>&1 || nc -z localhost 5432 2>/dev/null'
+    cmds:
+      - docker run -d
+        --name {{.DEV_DB}}
+        -e POSTGRES_USER={{.DEV_DB}}
+        -e POSTGRES_PASSWORD={{.DEV_DB}}
+        -e POSTGRES_DB={{.DEV_DB}}
+        -p 5432:5432
+        postgres:18
+      - |
+        echo "Waiting for postgres..."
+        until docker exec {{.DEV_DB}} pg_isready -U {{.DEV_DB}} >/dev/null 2>&1; do
+          sleep 1
+        done
+
+  devenv:db:
+    desc: "Create the dev postgres role and database (set DOCKER=true for Docker)"
+    deps: [devenv:db:local, devenv:db:docker]
+
+  devenv:
+    desc: Provision a full local dev environment (keys, config, database)
+    deps: [devenv:keys, devenv:config, devenv:db]
+
+  web:dev:
+    desc: Run Vite dev server (use with `go run -tags dev ./cmd/mirum-server`)
+    dir: cmd/mirum-server/web
+    deps: [web:install, proto]
+    prefix: vite
+    env:
+      NO_COLOR: "1"
+      CI: "true"
+    cmds:
+      - npm run dev
+
+  dev:server:
+    desc: Build mirum-server with -tags dev and run it against the dev environment
+    deps: [proto, licenses, devenv]
+    prefix: mirum-server
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -tags dev -o {{.BUILD_DIR}}/mirum-server ./cmd/mirum-server
+      - "{{.BUILD_DIR}}/mirum-server daemon --config dev/mirum-server.yaml"
+
+  run:
+    desc: Build and run mirum-server against the dev environment
+    deps: [build, devenv]
+    vars:
+      GOOS: { sh: go env GOOS }
+      GOARCH: { sh: go env GOARCH }
+    cmds:
+      - "{{.BUILD_DIR}}/mirum-server-{{.GOOS}}-{{.GOARCH}} daemon --config dev/mirum-server.yaml"
+
+  dev:
+    desc: Run Vite dev server and mirum-server together (HMR-enabled)
+    deps: [web:dev, dev:server]
+
+  # Test and lint checks
+  signof:
+    desc: Verifies that the author is known and has signed the CLA
+    cmds:
+      - |
+        ALLOWLIST="Nikolay Govorov|github-actions\\[bot\\]"
+
+        bad=0
+        for sha in $(git log --no-merges --format=%H); do
+          author=$(git log -1 --format='%an' "$sha")
+          if echo "$author" | grep -qP "^($ALLOWLIST)$"; then
+            continue
+          fi
+
+          email=$(git log -1 --format='%ae' "$sha")
+          expected="${author} <${email}>"
+          if ! git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qF "$expected"; then
+            echo "Commit ${sha:0:8} by ${expected} is missing a valid Signed-off-by"
+            bad=1
+          fi
+        done
+
+        if [ "$bad" -eq 1 ]; then
+          echo "All commits must be signed off (git commit -s). See CLA.md"
+          exit 1
+        fi
+
+        # Check that all authors and committers are in .mailmap
+        missing=0
+        for email in $(git log --no-merges --format='%ae%n%ce' | sort -u); do
+          if ! grep -v '^#' .mailmap | grep -qF "<${email}>"; then
+            echo "Email <${email}> is not in .mailmap"
+            missing=1
+          fi
+        done
+
+        if [ "$missing" -eq 1 ]; then
+          echo "All contributors must be listed in .mailmap. See README.md"
+          exit 1
+        fi
+
+  web:lint:
+    desc: Lint and check the frontend
+    dir: cmd/mirum-server/web
+    deps: [web:build]
+    cmds:
+      - npm run lint
+      - npm run size
+
+  go:lint:
+    desc: Lint and check the go
+    deps: [proto, web:build, licenses]
+    cmds:
+      - gofmt -l . | grep . && exit 1 || true
+      - go vet ./...
+      - go tool govulncheck ./...
+      - go tool golangci-lint run ./...
+
+  lint:
+    desc: Run static checks
+    deps: [go:lint, web:lint]
+    cmds:
+      - task: signof
+      - task: go:lint
+      - task: web:lint
+      - reuse lint
+
+  test:
+    desc: Run all tests
+    deps: [build]
+    env:
+      CGO_ENABLED: "1" # required for -race
+    cmds:
+      - go test -race -count=1 ./...
 
 # yaml-language-server: $schema=https://taskfile.dev/schema.json

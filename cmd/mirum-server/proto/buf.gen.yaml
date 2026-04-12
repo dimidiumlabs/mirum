@@ -9,7 +9,7 @@ plugins:
   - local: ["go", "tool", "connectrpc.com/connect/cmd/protoc-gen-connect-go"]
     out: ../apipb
     opt: paths=source_relative
-  - remote: buf.build/bufbuild/es:v2.11.0
+  - local: ["../web/node_modules/.bin/protoc-gen-es"]
     out: ../web/gen
     opt:
       - target=ts

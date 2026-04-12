@@ -1,6 +1,5 @@
 // Copyright (c) 2023 shadcn
 // SPDX-License-Identifier: MIT
-"use client";
 
 import * as React from "react";
 import { Separator as SeparatorPrimitive } from "radix-ui";

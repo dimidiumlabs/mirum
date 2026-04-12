@@ -7,8 +7,10 @@ require (
 	connectrpc.com/connect v1.19.1
 	connectrpc.com/validate v0.6.0
 	github.com/coreos/go-systemd/v22 v22.7.0
+	github.com/github/go-spdx/v2 v2.4.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/httprate v0.15.0
+	github.com/google/licensecheck v0.3.1
 	github.com/google/uuid v1.6.0
 	github.com/huandu/go-sqlbuilder v1.40.1
 	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6

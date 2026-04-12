@@ -43,8 +43,11 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
-      - name: CI checks
-        run: task ci
+      - name: Lint
+        run: task lint
+
+      - name: Tests
+        run: task test
 
       - name: Publish
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')

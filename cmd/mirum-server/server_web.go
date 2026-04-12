@@ -77,6 +77,7 @@ func NewWebServer(ctx context.Context, srv *server, consolePath string, consoleH
 		Mount("/assets", assetsHandler())
 
 	r.Get("/", authonly(h.index))
+	r.Get("/about/licenses", h.licenses)
 	r.Post("/webhook", h.webhook)
 
 	r.Route("/auth", func(r chi.Router) {
