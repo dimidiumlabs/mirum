@@ -3,9 +3,9 @@
 
 version: v2
 plugins:
-  - local: protoc-gen-go
+  - local: ["go", "tool", "google.golang.org/protobuf/cmd/protoc-gen-go"]
     out: ../wirepb
     opt: paths=source_relative
-  - local: protoc-gen-connect-go
+  - local: ["go", "tool", "connectrpc.com/connect/cmd/protoc-gen-connect-go"]
     out: ../wirepb
     opt: paths=source_relative

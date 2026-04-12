@@ -9,6 +9,7 @@ package supervisor
 
 import (
 	"context"
+	"net"
 	"os/signal"
 	"syscall"
 )
@@ -29,12 +30,25 @@ type Supervisor interface {
 
 	// WaitForStop blocks until the supervisor or OS requests shutdown.
 	WaitForStop(ctx context.Context) context.Context
+
+	// ActivationListeners returns named listeners passed by the service
+	// manager (e.g. systemd socket activation). Returns nil when the
+	// platform does not support listener inheritance.
+	ActivationListeners() (map[string][]net.Listener, error)
+}
+
+var detectors []func() Supervisor
+
+func register(fn func() Supervisor) {
+	detectors = append(detectors, fn)
 }
 
 // Detect returns a Supervisor for the current platform.
 func Detect() Supervisor {
-	if detectSystemd() {
-		return &systemd{}
+	for _, fn := range detectors {
+		if s := fn(); s != nil {
+			return s
+		}
 	}
 	return &noop{}
 }
@@ -51,4 +65,8 @@ func (*noop) WaitForStop(ctx context.Context) context.Context {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	_ = stop
 	return ctx
+}
+
+func (*noop) ActivationListeners() (map[string][]net.Listener, error) {
+	return nil, nil
 }

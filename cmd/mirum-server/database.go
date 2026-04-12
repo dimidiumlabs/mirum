@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1348,7 +1349,7 @@ func (db *DB) WorkerLookup(ctx context.Context, actor Actor, publicKey []byte) (
 // hashToken returns the hex-encoded SHA-256 of a session token.
 func hashToken(token string) string {
 	h := sha256.Sum256([]byte(token))
-	return fmt.Sprintf("%x", h)
+	return hex.EncodeToString(h[:])
 }
 
 // verifyHash parses a PHC-format argon2id string and compares.

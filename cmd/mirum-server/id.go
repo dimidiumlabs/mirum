@@ -5,6 +5,7 @@ package main
 
 import (
 	"database/sql/driver"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -173,7 +174,7 @@ func FormatAnyID(b []byte) string {
 	if len(b) == 16 {
 		return encodeBase58(uuid.UUID(b))
 	}
-	return fmt.Sprintf("%x", b)
+	return hex.EncodeToString(b)
 }
 
 func parseID(prefix, s string) (uuid.UUID, error) {

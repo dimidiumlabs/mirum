@@ -13,22 +13,22 @@ maintainer: Nikolay Govorov <me@govorov.online>
 description: Modern CI platform
 
 contents:
-  - src: ./LICENSE
-    dst: /usr/share/doc/mirum/LICENSE
+  - src: ./LICENSES/*
+    dst: /usr/share/doc/mirum/LICENSES/
   - src: ./README.md
     dst: /usr/share/doc/mirum/README.md
 
-  - src: build/mirum-server
+  - src: build/tmp/mirum-server
     dst: /usr/local/bin/mirum-server
     file_info:
       mode: 0755
 
-  - src: build/mirum-worker
+  - src: build/tmp/mirum-worker
     dst: /usr/local/bin/mirum-worker
     file_info:
       mode: 0755
 
-  - src: build/mirum
+  - src: build/tmp/mirum
     dst: /usr/local/bin/mirum
     file_info:
       mode: 0755

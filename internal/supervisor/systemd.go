@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Nikolay Govorov
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//go:build linux
+
 package supervisor
 
 import (
@@ -12,14 +14,22 @@ import (
 	"syscall"
 	"time"
 
+	"net"
+
+	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
 )
 
-type systemd struct{}
-
-func detectSystemd() bool {
-	return os.Getenv("NOTIFY_SOCKET") != ""
+func init() {
+	register(func() Supervisor {
+		if os.Getenv("NOTIFY_SOCKET") != "" {
+			return &systemd{}
+		}
+		return nil
+	})
 }
+
+type systemd struct{}
 
 func (*systemd) WaitForStop(ctx context.Context) context.Context {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
@@ -66,4 +76,8 @@ func (*systemd) StartWatchdog(ctx context.Context) {
 			return
 		}
 	}
+}
+
+func (*systemd) ActivationListeners() (map[string][]net.Listener, error) {
+	return activation.ListenersWithNames()
 }

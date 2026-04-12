@@ -5,12 +5,24 @@ version: "3"
 
 output: prefixed
 
+env:
+  CGO_ENABLED: "0" # cgo forbidden in mirum, do not change this behavior.
+  SOURCE_DATE_EPOCH:
+    sh: 'if [ -z "$(git status --porcelain)" ]; then git log -1 --format=%ct; else date +%s; fi'
+
 vars:
-  BUILD_DIR: build
-  DIST_DIR: build/dist
-  ARCHES: amd64 arm64 riscv64 ppc64le
-  DEV_DB: mirum-local-dev
   DOCKER: "false"
+  DEV_DB: mirum-local-dev
+  DIST_DIR: build/dist
+  BUILD_DIR: build
+  TARGETS: >-
+    linux-amd64 linux-arm64 linux-riscv64 linux-ppc64le linux-loong64 linux-s390x
+    darwin-amd64 darwin-arm64
+    windows-amd64 windows-arm64
+    freebsd-amd64 freebsd-arm64 freebsd-riscv64
+    openbsd-amd64 openbsd-arm64
+    netbsd-amd64 netbsd-arm64
+  LINUX_PKG_TARGETS: amd64 arm64 riscv64 ppc64le loong64 s390x
 
 tasks:
   ci:
@@ -231,8 +243,6 @@ tasks:
     desc: Build mirum-server with -tags dev and run it against the dev environment
     deps: [proto, devenv]
     prefix: mirum-server
-    env:
-      CGO_ENABLED: "0"
     cmds:
       - mkdir -p {{.BUILD_DIR}}
       - go build -tags dev -o {{.BUILD_DIR}}/mirum-server ./cmd/mirum-server
@@ -248,24 +258,55 @@ tasks:
     vars:
       GOOS: { sh: "echo ${GOOS:-$(go env GOOS)}" }
       GOARCH: { sh: "echo ${GOARCH:-$(go env GOARCH)}" }
+      LDFLAGS: "-s -w"
     env:
-      CGO_ENABLED: "0"
       GOOS: "{{.GOOS}}"
       GOARCH: "{{.GOARCH}}"
+      GOFLAGS: "-trimpath"
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -o {{.BUILD_DIR}}/mirum-server-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum-server
-      - go build -o {{.BUILD_DIR}}/mirum-worker-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum-worker
-      - go build -o {{.BUILD_DIR}}/mirum-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum
-      - cp {{.BUILD_DIR}}/mirum-server-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirum-server
-      - cp {{.BUILD_DIR}}/mirum-worker-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirum-worker
-      - cp {{.BUILD_DIR}}/mirum-{{.GOOS}}-{{.GOARCH}} {{.BUILD_DIR}}/mirum
+      - go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/mirum-server-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum-server
+      - go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/mirum-worker-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum-worker
+      - go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/mirum-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum
+
+  cross:
+    desc: Cross-compile and archive binaries for all supported platforms
+    cmds:
+      - |
+        mkdir -p {{.DIST_DIR}}
+        for target in {{.TARGETS}}; do
+          os="${target%%-*}"
+          arch="${target#*-}"
+          task build GOOS="$os" GOARCH="$arch"
+
+          ext=""
+          [ "$os" = "windows" ] && ext=".exe"
+
+          staging=$(mktemp -d)
+          cp README.md "$staging/"
+          cp -r LICENSES "$staging/"
+          for cmd in cmd/*/; do
+            bin=$(basename "$cmd")
+            cp "{{.BUILD_DIR}}/${bin}-${os}-${arch}" "${staging}/${bin}${ext}"
+          done
+
+          if [ "$os" = "windows" ]; then
+            (cd "$staging" && zip -qr "$OLDPWD/{{.DIST_DIR}}/mirum-${target}.zip" .)
+          else
+            tar -czf "{{.DIST_DIR}}/mirum-${target}.tar.gz" -C "$staging" .
+          fi
+          rm -rf "$staging"
+        done
+      - cd {{.DIST_DIR}} && sha256sum *.tar.gz *.zip > SHA256SUMS
 
   run:
     desc: Build and run mirum-server against the dev environment
     deps: [build, devenv]
+    vars:
+      GOOS: { sh: go env GOOS }
+      GOARCH: { sh: go env GOARCH }
     cmds:
-      - "{{.BUILD_DIR}}/mirum-server daemon --config dev/mirum-server.yaml"
+      - "{{.BUILD_DIR}}/mirum-server-{{.GOOS}}-{{.GOARCH}} daemon --config dev/mirum-server.yaml"
 
   test:
     desc: Run all tests
@@ -274,7 +315,8 @@ tasks:
       - go test -race -count=1 ./...
 
   package:
-    desc: Build deb/rpm packages for all architectures
+    desc: Cross-compile all platforms and build deb/rpm packages for Linux
+    deps: [cross]
     vars:
       VERSION:
         sh: |
@@ -308,12 +350,15 @@ tasks:
           export NFPM_PASSPHRASE="$GPG_PASSPHRASE"
         fi
 
-        mkdir -p {{.DIST_DIR}}
-        for arch in {{.ARCHES}}; do
-          task build GOOS=linux GOARCH=$arch
+        for arch in {{.LINUX_PKG_TARGETS}}; do
+          mkdir -p {{.BUILD_DIR}}/tmp
+          for cmd in cmd/*/; do
+            bin=$(basename "$cmd")
+            cp "{{.BUILD_DIR}}/${bin}-linux-${arch}" "{{.BUILD_DIR}}/tmp/${bin}"
+          done
           ARCH=$arch nfpm package --packager deb --target {{.DIST_DIR}}/
           ARCH=$arch nfpm package --packager rpm --target {{.DIST_DIR}}/
-          rm {{.BUILD_DIR}}/mirum-server {{.BUILD_DIR}}/mirum-worker
+          rm -rf {{.BUILD_DIR}}/tmp
         done
 
         printf 'VERSION={{.VERSION}}\nCHANNEL={{.CHANNEL}}\n' > {{.DIST_DIR}}/build.env
@@ -337,16 +382,25 @@ tasks:
           done
         fi
 
-        gh release create "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm \
+        gh release create "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS \
           --title "$NAME" \
           $( [ "{{.CHANNEL}}" = "nightly" ] && echo "--prerelease" ) \
           --notes "**Version**: {{.VERSION}}" \
-          || gh release upload "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm --clobber
+          || gh release upload "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS --clobber
 
   publish:repos:
     desc: Publish packages to APT and RPM repositories on S3
     requires:
-      vars: [CHANNEL, S3_BUCKET, S3_PUBLIC_URL, S3_PROVIDER, S3_REGION, S3_ENDPOINT, GPG_KEY_ID]
+      vars:
+        [
+          CHANNEL,
+          S3_BUCKET,
+          S3_PUBLIC_URL,
+          S3_PROVIDER,
+          S3_REGION,
+          S3_ENDPOINT,
+          GPG_KEY_ID,
+        ]
     cmds:
       - |
         set -e
@@ -383,7 +437,7 @@ tasks:
 
         for ch in stable nightly; do
           mkdir -p apt-repo/pool/$ch
-          for arch in {{.ARCHES}}; do
+          for arch in {{.LINUX_PKG_TARGETS}}; do
             mkdir -p apt-repo/dists/$ch/main/binary-$arch
           done
         done
@@ -394,7 +448,7 @@ tasks:
         apt-ftparchive \
           -o APT::FTPArchive::Release::Codename=$CHANNEL \
           -o APT::FTPArchive::Release::Components=main \
-          -o APT::FTPArchive::Release::Architectures="{{.ARCHES}}" \
+          -o APT::FTPArchive::Release::Architectures="{{.LINUX_PKG_TARGETS}}" \
           release dists/$CHANNEL/ > dists/$CHANNEL/Release
         gpg --default-key="{{.GPG_KEY_ID}}" --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" -abs -o dists/$CHANNEL/Release.gpg dists/$CHANNEL/Release
         gpg --default-key="{{.GPG_KEY_ID}}" --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --clearsign -o dists/$CHANNEL/InRelease dists/$CHANNEL/Release

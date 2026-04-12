@@ -18,7 +18,6 @@ import (
 	"dimidiumlabs/mirum/internal/protocol/wirepb"
 	"dimidiumlabs/mirum/internal/supervisor"
 
-	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/spf13/cobra"
 )
 
@@ -121,7 +120,7 @@ func daemon(configFile, socketFlag string) error {
 		},
 	})
 
-	grpcLn, webLn, adminLn, err := listeners(cfg)
+	grpcLn, webLn, adminLn, err := listeners(cfg, sup)
 	if err != nil {
 		slog.Error("listeners failed", "err", err)
 		return err
@@ -192,8 +191,8 @@ func daemon(configFile, socketFlag string) error {
 // listeners returns gRPC, web, and admin listeners.
 // With systemd socket activation it expects two named fds: "grpc" and "web".
 // Without socket activation it falls back to configured addresses.
-func listeners(cfg *appConfig) (grpcLn, webLn, adminLn net.Listener, err error) {
-	named, err := activation.ListenersWithNames()
+func listeners(cfg *appConfig, sup supervisor.Supervisor) (grpcLn, webLn, adminLn net.Listener, err error) {
+	named, err := sup.ActivationListeners()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("socket activation: %w", err)
 	}

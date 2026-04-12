@@ -1,6 +1,10 @@
 # Copyright (c) 2026 Nikolay Govorov
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+# NOTE: Don't extend it; keep the logic in the Taskfile.
+# We're using GitHub Actions as a temporary solution
+# until Mirum can handle its own maintenance.
+
 name: Build
 
 on:
@@ -31,8 +35,6 @@ jobs:
           sudo apt update && sudo apt install nfpm apt-utils rclone createrepo-c
           sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
           curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.67.0/buf-$(uname -s)-$(uname -m)" -o /usr/local/bin/buf && chmod +x /usr/local/bin/buf
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-          go install connectrpc.com/connect/cmd/protoc-gen-connect-go@latest
           pipx install reuse
 
       - name: Build and package

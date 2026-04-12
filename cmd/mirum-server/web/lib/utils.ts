@@ -6,6 +6,7 @@ import { twMerge } from "tailwind-merge"
 export type ClassValue = ClassArray | Record<string, unknown> | string | number | bigint | null | boolean | undefined
 export type ClassArray = ClassValue[]
 
+// avoid dependency for 10 lines and this version is stricter in TS
 function classList(value: ClassValue): string {
   if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
     return String(value)
