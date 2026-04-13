@@ -6,7 +6,8 @@ server: localhost:2026
 # Ed25519 private key for worker authentication (PEM-encoded PKCS8).
 # Generate with:
 #   openssl genpkey -algorithm Ed25519 -out /etc/mirum/worker/default.key
-#   chmod 600 /etc/mirum/worker/default.key
+#   chmod 0640              /etc/mirum/worker/default.key
+#   chown root:mirum-worker /etc/mirum/worker/default.key
 #
 # Register the public key on the daemon:
 #   PUBKEY=$(openssl pkey -in /etc/mirum/worker/default.key -pubout -outform der | base64 -w0)
