@@ -3,4 +3,6 @@
 
 /node_modules
 /gen
+
+# it's a go template, not just a html
 shell.html

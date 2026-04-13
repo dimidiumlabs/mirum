@@ -88,14 +88,14 @@ tasks:
     sources:
       - go.sum
       - cmd/mirum-server/web/package-lock.json
-      - internal/licensegen/**/*.go
+      - tools/licensegen/**/*.go
       - LICENSES.go
       - LICENSES/*.txt
     generates:
       - build/licenses.json
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go run -tags licensegen ./internal/licensegen -out {{.BUILD_DIR}}/licenses.json
+      - go run -tags licensegen ./tools/licensegen -out {{.BUILD_DIR}}/licenses.json
 
   build:
     desc: "Build binaries (override GOOS/GOARCH for cross-compilation)"
@@ -240,7 +240,7 @@ tasks:
         # Upload static files
         gpg --export --armor "{{.GPG_KEY_ID}}" > "$GNUPGHOME/public.gpg"
         rclone copyto "$GNUPGHOME/public.gpg" "s3:{{.S3_BUCKET}}/public.gpg"
-        rclone copy pkg/dl/ "s3:{{.S3_BUCKET}}/"
+        rclone copy packaging/dl/ "s3:{{.S3_BUCKET}}/"
 
         # APT repository
         CHANNEL={{.CHANNEL}}
@@ -256,7 +256,7 @@ tasks:
         cp {{.DIST_DIR}}/*.deb apt-repo/pool/$CHANNEL/
 
         cd apt-repo
-        apt-ftparchive generate "$(pwd)/../pkg/apt-ftparchive.conf"
+        apt-ftparchive generate "$(pwd)/../packaging/apt-ftparchive.conf"
         apt-ftparchive \
           -o APT::FTPArchive::Release::Codename=$CHANNEL \
           -o APT::FTPArchive::Release::Components=main \

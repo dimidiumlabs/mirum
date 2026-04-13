@@ -33,7 +33,7 @@ contents:
     file_info:
       mode: 0755
 
-  - src: pkg/server/config.yaml
+  - src: packaging/server/config.yaml
     dst: /etc/mirum/server/config.yaml
     type: config|noreplace
     file_info:
@@ -41,7 +41,7 @@ contents:
       owner: root
       group: mirum-server
 
-  - src: pkg/worker/default.yaml
+  - src: packaging/worker/default.yaml
     dst: /etc/mirum/worker/default.yaml
     type: config|noreplace
     file_info:
@@ -49,12 +49,12 @@ contents:
       owner: root
       group: mirum-worker
 
-  - src: pkg/mirum-server.service
+  - src: packaging/mirum-server.service
     dst: /usr/lib/systemd/system/mirum-server.service
     file_info:
       mode: 0644
 
-  - src: pkg/mirum-worker@.service
+  - src: packaging/mirum-worker@.service
     dst: /usr/lib/systemd/system/mirum-worker@.service
     file_info:
       mode: 0644
@@ -75,9 +75,9 @@ contents:
 
 
 scripts:
-  preinstall: pkg/scripts/preinstall.sh
-  postinstall: pkg/scripts/postinstall.sh
-  preremove: pkg/scripts/preremove.sh
+  preinstall: packaging/scripts/preinstall.sh
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh
 
 deb:
   signature:

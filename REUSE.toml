@@ -11,8 +11,8 @@ path = [
   "cmd/mirum-server/web/*.json",
   "go.mod",
   "go.sum",
-  "pkg/dl/*",
-  "pkg/logo.svg",
+  "packaging/dl/*",
+  "packaging/logo.svg",
   "buf.*",
 ]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov <me@govorov.online>"

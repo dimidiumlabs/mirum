@@ -14,7 +14,7 @@ import (
 // primarySPDX is the SPDX identifier of mirum itself.
 const primarySPDX = "AGPL-3.0-or-later"
 
-// licensesPageData mirrors internal/licensegen's Manifest with a primary
+// licensesPageData mirrors tools/licensegen's Manifest with a primary
 // license header prepended. The frontend consumes it verbatim.
 type licensesPageData struct {
 	Primary struct {
