@@ -36,8 +36,10 @@ var (
 	ErrAlreadyMember  = errors.New("database: already a member")
 	ErrEmailTaken     = errors.New("database: email already taken")
 	ErrInvalidCreds   = errors.New("database: invalid credentials")
-	ErrInvalidEmail   = errors.New("database: invalid email")
-	ErrInvalidRole    = errors.New("database: invalid role")
+	ErrInvalidDateFormat = errors.New("database: invalid date format")
+	ErrInvalidEmail      = errors.New("database: invalid email")
+	ErrInvalidRole       = errors.New("database: invalid role")
+	ErrInvalidTimezone   = errors.New("database: invalid timezone")
 	ErrInvalidSlug    = errors.New("database: invalid slug")
 	ErrLastOwner      = errors.New("database: last owner")
 	ErrMigrate        = errors.New("database: failed to create migrator")
@@ -109,11 +111,36 @@ type DB struct {
 	Pool *pgxpool.Pool
 }
 
+type DateFormat string
+
+const (
+	DateFormatDMY DateFormat = "dmy"
+	DateFormatMDY DateFormat = "mdy"
+	DateFormatYMD DateFormat = "ymd"
+)
+
+// LocaleSettings holds a user's language and date-format preferences,
+// stored as a composite column in the database.
+type LocaleSettings struct {
+	Language   *string
+	DateFormat *DateFormat
+}
+
 // User holds info about a user.
 type User struct {
 	ID        UserID
 	Email     string
 	CreatedAt time.Time
+	Locale    *LocaleSettings
+	Timezone  *string
+}
+
+type UserUpdateParams struct {
+	Email    *string
+	Password *string
+	Pepper   []byte
+	Locale   *LocaleSettings
+	Timezone *string
 }
 
 // Organization holds info about an organization.
@@ -423,6 +450,26 @@ func (db *DB) Migrate(ctx context.Context) error {
 		ALTER TABLE workers DISABLE ROW LEVEL SECURITY;
 	`)
 
+	migrator.AppendMigration("add_user_settings", `
+		CREATE DOMAIN timezone_t AS TEXT
+			CHECK (VALUE IS NULL OR EXISTS (
+				SELECT 1 FROM pg_timezone_names WHERE name = VALUE
+			));
+
+		CREATE TYPE date_format_t AS ENUM ('dmy', 'mdy', 'ymd');
+		CREATE TYPE locale_settings AS (
+			language    TEXT,
+			date_format date_format_t,
+			timezone    timezone_t
+		);
+		ALTER TABLE users ADD COLUMN locale locale_settings;
+	`, `
+		ALTER TABLE users DROP COLUMN locale;
+		DROP TYPE locale_settings;
+		DROP DOMAIN timezone_t;
+		DROP TYPE date_format_t;
+	`)
+
 	return migrator.Migrate(ctx)
 }
 
@@ -480,16 +527,28 @@ func (db *DB) UserGet(ctx context.Context, actor Actor, ref UserRef) (*User, err
 			col, val := ref.where()
 
 			q := sb.PostgreSQL.NewSelectBuilder()
-			sql, args := q.Select("id", "email", "created_at").
+			sql, args := q.Select("id", "email", "created_at",
+				"(locale).language", "(locale).date_format::text", "(locale).timezone").
 				From("users").
 				Where(q.Equal(col, val), q.IsNull("deleted_at")).
 				Build()
 
-			if err := tx.QueryRow(ctx, sql, args...).Scan(&u.ID, &u.Email, &u.CreatedAt); err != nil {
+			var language, dateFormatStr *string
+			if err := tx.QueryRow(ctx, sql, args...).Scan(
+				&u.ID, &u.Email, &u.CreatedAt, &language, &dateFormatStr, &u.Timezone,
+			); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return ErrUserNotFound
 				}
 				return err
+			}
+			if language != nil || dateFormatStr != nil {
+				ls := &LocaleSettings{Language: language}
+				if dateFormatStr != nil {
+					df := DateFormat(*dateFormatStr)
+					ls.DateFormat = &df
+				}
+				u.Locale = ls
 			}
 
 			return nil
@@ -547,10 +606,10 @@ func (db *DB) UserList(ctx context.Context, actor Actor, cursor UserID, limit in
 	return users, total, err
 }
 
-// UserUpdate updates a user's email and/or password.
+// UserUpdate updates a user's email, password, and/or preferences.
 // Invalidates all sessions when password changes.
-func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *string, password *string, pepper []byte) error {
-	if email == nil && password == nil {
+func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, p UserUpdateParams) error {
+	if p.Email == nil && p.Password == nil && p.Locale == nil && p.Timezone == nil {
 		return nil
 	}
 
@@ -565,24 +624,37 @@ func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *s
 			return checkSelf(actor, id)
 		},
 		func(tx pgx.Tx) error {
-			if email != nil && strings.HasSuffix(strings.ToLower(*email), reservedEmailSuffix) {
+			if p.Email != nil && strings.HasSuffix(strings.ToLower(*p.Email), reservedEmailSuffix) {
 				return ErrReservedEmail
 			}
+
 			return nil
 		},
 		func(tx pgx.Tx) error {
 			ub := sb.PostgreSQL.NewUpdateBuilder()
 			ub.Update("users")
 
-			if email != nil {
-				ub.SetMore(ub.Assign("email", *email))
+			if p.Email != nil {
+				ub.SetMore(ub.Assign("email", *p.Email))
 			}
-			if password != nil {
-				hash, err := hashPassword(*password, pepper)
+			if p.Password != nil {
+				hash, err := hashPassword(*p.Password, p.Pepper)
 				if err != nil {
 					return err
 				}
 				ub.SetMore(ub.Assign("password", hash))
+			}
+			if p.Locale != nil || p.Timezone != nil {
+				var lang *string
+				var dateFormat *DateFormat
+				if p.Locale != nil {
+					lang = p.Locale.Language
+					dateFormat = p.Locale.DateFormat
+				}
+				ub.SetMore(fmt.Sprintf(
+					"locale = ROW(COALESCE(%s, (locale).language), COALESCE(%s::date_format_t, (locale).date_format), COALESCE(%s, (locale).timezone))::locale_settings",
+					ub.Var(lang), ub.Var(dateFormat), ub.Var(p.Timezone),
+				))
 			}
 			ub.Where(ub.Equal("id", id))
 
@@ -595,7 +667,7 @@ func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *s
 				return err
 			}
 
-			if password != nil {
+			if p.Password != nil {
 				if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
 					return err
 				}
@@ -661,8 +733,9 @@ func (db *DB) UserVerifyPassword(ctx context.Context, actor Actor, email, passwo
 	return id, err
 }
 
+
 // UserSessionGet resolves a session token into the Actor it authenticates.
-// Returns an invalid zero Actor on any error; callers must check err.
+// Returns a zero Actor on any error; callers must check err.
 func (db *DB) UserSessionGet(ctx context.Context, actor Actor, token string) (Actor, error) {
 	var (
 		userID    UserID

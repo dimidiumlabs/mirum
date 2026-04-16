@@ -4,7 +4,10 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
-    "paths": { "@/*": ["./*"] },
+    "paths": {
+      "@/*": ["./*"],
+      "@/messages": ["./messages/en-GB"]
+    },
 
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "target": "ES2023",
@@ -13,6 +16,7 @@
     "module": "ESNext",
     "types": ["vite/client"],
     "skipLibCheck": true,
+    "resolveJsonModule": true,
 
     /* Bundler mode */
     "moduleResolution": "bundler",
@@ -29,5 +33,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["components", "api", "lib", "entries", "gen"]
+  "include": ["components", "api", "lib", "entries", "gen", "messages"]
 }

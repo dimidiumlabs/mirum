@@ -71,12 +71,12 @@ type assetResolver struct {
 	assets map[string]pageAssets // keyed by entry name (e.g. "dashboard")
 }
 
-func newAssetResolver() *assetResolver {
+func newAssetResolver(manifest []byte) *assetResolver {
 	if viteDevURL != "" {
 		return &assetResolver{}
 	}
 
-	if len(manifestJSON) == 0 {
+	if len(manifest) == 0 {
 		slog.Warn("vite manifest not found, frontend assets unavailable")
 		return &assetResolver{assets: map[string]pageAssets{}}
 	}
@@ -90,8 +90,8 @@ func newAssetResolver() *assetResolver {
 		IsEntry bool     `json:"isEntry"`
 	}
 
-	var manifest map[string]viteManifestEntry
-	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+	var manifest_ map[string]viteManifestEntry
+	if err := json.Unmarshal(manifest, &manifest_); err != nil {
 		slog.Error("failed to parse vite manifest", "err", err)
 		return &assetResolver{assets: map[string]pageAssets{}}
 	}
@@ -99,7 +99,7 @@ func newAssetResolver() *assetResolver {
 	refOf := func(file string) assetRef {
 		integrity := ""
 
-		data, err := assetsFS.ReadFile("static/" + file)
+		data, err := assetsFS.ReadFile("static/assets/" + strings.TrimPrefix(file, "assets/"))
 		if err != nil {
 			slog.Error("asset not found for integrity hash", "file", file, "err", err)
 		} else {
@@ -111,7 +111,7 @@ func newAssetResolver() *assetResolver {
 	}
 
 	assets := make(map[string]pageAssets)
-	for key, entry := range manifest {
+	for key, entry := range manifest_ {
 		if !entry.IsEntry {
 			continue
 		}
@@ -129,7 +129,7 @@ func newAssetResolver() *assetResolver {
 					continue
 				}
 				seen[k] = true
-				chunk, ok := manifest[k]
+				chunk, ok := manifest_[k]
 				if !ok {
 					continue
 				}
@@ -183,7 +183,38 @@ window.__vite_plugin_react_preamble_installed__ = true`,
 	return ar.assets[name]
 }
 
-func (ar *assetResolver) renderPage(w http.ResponseWriter, entry string, status int, data any) {
+// localeAssets maps locale codes to their respective asset resolvers.
+type localeAssets struct {
+	resolvers map[string]*assetResolver
+	fallback  string
+}
+
+func newLocaleAssets() *localeAssets {
+	if viteDevURL != "" {
+		dev := newAssetResolver(nil)
+		return &localeAssets{
+			resolvers: map[string]*assetResolver{
+				"en-GB": dev,
+				"en-US": dev,
+			},
+			fallback: "en-GB",
+		}
+	}
+	return &localeAssets{
+		resolvers: map[string]*assetResolver{
+			"en-GB": newAssetResolver(manifestEnGB),
+			"en-US": newAssetResolver(manifestEnUS),
+		},
+		fallback: "en-GB",
+	}
+}
+
+func (la *localeAssets) renderPage(w http.ResponseWriter, entry, locale string, status int, data any) {
+	ar := la.resolvers[locale]
+	if ar == nil {
+		ar = la.resolvers[la.fallback]
+	}
+
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -207,12 +238,14 @@ func (ar *assetResolver) renderPage(w http.ResponseWriter, entry string, status 
 		Preloads []assetRef
 		CSS      []assetRef
 		Preamble template.JS
+		Locale   string
 	}{
 		DataJSON: template.JS(dataJSON),
 		Scripts:  assets.Scripts,
 		Preloads: assets.Preloads,
 		CSS:      assets.CSS,
 		Preamble: template.JS(assets.Preamble),
+		Locale:   locale,
 	}); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}

@@ -3,6 +3,7 @@
 
 import { StrictMode, type ComponentType } from "react";
 import { createRoot } from "react-dom/client";
+import type { Messages } from "@/messages/types";
 
 export function getInitialData<T>(): T {
   const el = document.getElementById("__DATA__");
@@ -13,8 +14,11 @@ export function getInitialData<T>(): T {
   return JSON.parse(el.textContent) as T;
 }
 
-export function mountPage<P extends object>(Component: ComponentType<P>) {
-  const props = getInitialData<P>();
+export function mountPage<P extends { m: Messages }>(
+  Component: ComponentType<P>,
+  m: Messages,
+) {
+  const data = getInitialData<Omit<P, "m">>();
 
   const root = document.getElementById("app");
   if (!root) {
@@ -23,7 +27,7 @@ export function mountPage<P extends object>(Component: ComponentType<P>) {
 
   createRoot(root).render(
     <StrictMode>
-      <Component {...props} />
+      <Component {...({ ...data, m } as unknown as P)} />
     </StrictMode>,
   );
 }
