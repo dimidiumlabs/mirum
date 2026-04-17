@@ -173,7 +173,7 @@ tasks:
       VERSION: "{{.VERSION}}"
     cmds:
       - |
-        cleanup() { rm -rf "$GNUPGHOME" /tmp/mirum-signing.asc 2>/dev/null; }
+        cleanup() { rm -rf "$GNUPGHOME" /tmp/mirum-signing.asc /tmp/mirum-apk.rsa 2>/dev/null; }
         trap cleanup EXIT
 
         if [ -n "${GPG_PRIVATE_KEY:-}" ]; then
@@ -187,6 +187,13 @@ tasks:
           export NFPM_PASSPHRASE="$GPG_PASSPHRASE"
         fi
 
+        if [ -n "${APK_PRIVATE_KEY:-}" ]; then
+          printf '%s' "$APK_PRIVATE_KEY" > /tmp/mirum-apk.rsa
+          chmod 600 /tmp/mirum-apk.rsa
+          export APK_SIGNING_KEY="/tmp/mirum-apk.rsa"
+          openssl rsa -in /tmp/mirum-apk.rsa -pubout -out "{{.DIST_DIR}}/mirum.rsa.pub"
+        fi
+
         for arch in {{.LINUX_PKG_TARGETS}}; do
           mkdir -p {{.BUILD_DIR}}/tmp
           for cmd in cmd/*/; do
@@ -195,6 +202,10 @@ tasks:
           done
           ARCH=$arch nfpm package --packager deb --target {{.DIST_DIR}}/
           ARCH=$arch nfpm package --packager rpm --target {{.DIST_DIR}}/
+          # Alpine does not build for loong64
+          if [ "$arch" != "loong64" ]; then
+            ARCH=$arch nfpm package --packager apk --target {{.DIST_DIR}}/
+          fi
           rm -rf {{.BUILD_DIR}}/tmp
         done
 
@@ -241,6 +252,10 @@ tasks:
         gpg --export --armor "{{.GPG_KEY_ID}}" > "$GNUPGHOME/public.gpg"
         rclone copyto "$GNUPGHOME/public.gpg" "s3:{{.S3_BUCKET}}/public.gpg"
         rclone copy packaging/dl/ "s3:{{.S3_BUCKET}}/"
+
+        if [ -f "{{.DIST_DIR}}/mirum.rsa.pub" ]; then
+          rclone copyto "{{.DIST_DIR}}/mirum.rsa.pub" "s3:{{.S3_BUCKET}}/mirum.rsa.pub"
+        fi
 
         # APT repository
         CHANNEL={{.CHANNEL}}
@@ -306,11 +321,11 @@ tasks:
           done
         fi
 
-        gh release create "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS \
+        gh release create "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.apk {{.DIST_DIR}}/*.rsa.pub {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS \
           --title "$NAME" \
           $( [ "{{.CHANNEL}}" = "nightly" ] && echo "--prerelease" ) \
           --notes "**Version**: {{.VERSION}}" \
-          || gh release upload "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS --clobber
+          || gh release upload "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.apk {{.DIST_DIR}}/*.rsa.pub {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS --clobber
 
   # Local dev env
   devenv:config:

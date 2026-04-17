@@ -1,0 +1,35 @@
+#!/sbin/openrc-run
+# Copyright (c) 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Templated service. To run a worker named "default":
+#   ln -s mirum-worker /etc/init.d/mirum-worker.default
+#   rc-service mirum-worker.default start
+#   rc-update add mirum-worker.default default
+#
+# The config file is /etc/mirum/worker/<instance>.yaml.
+
+case "$RC_SVCNAME" in
+	mirum-worker)    instance=default ;;
+	mirum-worker.*)  instance="${RC_SVCNAME#mirum-worker.}" ;;
+esac
+
+description="Mirum worker (${instance})"
+
+command="/usr/local/bin/mirum-worker"
+command_args="--config=/etc/mirum/worker/${instance}.yaml"
+command_user="mirum-worker:mirum-worker"
+supervisor="supervise-daemon"
+respawn_delay=30
+output_log="/var/log/mirum-worker/${instance}.out.log"
+error_log="/var/log/mirum-worker/${instance}.err.log"
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	checkpath -d -o mirum-worker:mirum-worker -m 0750 /var/log/mirum-worker
+	checkpath -d -o mirum-worker:mirum-worker -m 0750 /run/mirum-worker
+}

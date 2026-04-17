@@ -171,6 +171,29 @@ sudo systemctl enable --now mirum-server
 sudo systemctl enable --now mirum-worker@default
 ```
 
+**Alpine:**
+
+No repository yet — grab the signing key and the signed `.apk` from the nightly
+release:
+
+```sh
+sudo wget -O /etc/apk/keys/mirum.rsa.pub https://dl.mirum.dev/mirum.rsa.pub
+
+# Download the .apk for your arch from
+# https://github.com/dimidiumlabs/mirum/releases/tag/nightly
+sudo apk add ./mirum_<version>_<arch>.apk
+
+# Start the server
+sudo rc-update add mirum-server default
+sudo rc-service mirum-server start
+
+# Start a worker (optional, can run on a different host).
+# mirum-worker is a templated service — symlink it per instance name:
+sudo ln -s mirum-worker /etc/init.d/mirum-worker.default
+sudo rc-update add mirum-worker.default default
+sudo rc-service mirum-worker.default start
+```
+
 ## Contributing
 
 We welcome your contributions, including code, bug reports, ideas, and success stories.

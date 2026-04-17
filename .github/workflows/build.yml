@@ -42,6 +42,7 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          APK_PRIVATE_KEY: ${{ secrets.APK_PRIVATE_KEY }}
 
       - name: Lint
         run: task lint

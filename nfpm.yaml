@@ -49,16 +49,6 @@ contents:
       owner: root
       group: mirum-worker
 
-  - src: packaging/mirum-server.service
-    dst: /usr/lib/systemd/system/mirum-server.service
-    file_info:
-      mode: 0644
-
-  - src: packaging/mirum-worker@.service
-    dst: /usr/lib/systemd/system/mirum-worker@.service
-    file_info:
-      mode: 0644
-
   - dst: /var/lib/mirum-server
     type: dir
     file_info:
@@ -72,6 +62,42 @@ contents:
       mode: 0750
       owner: mirum-worker
       group: mirum-worker
+
+  # nfpm's `packager` field is a single value, so systemd units get listed
+  # twice (once per non-apk packager) to scope them away from Alpine.
+  - src: packaging/mirum-server.service
+    dst: /usr/lib/systemd/system/mirum-server.service
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: packaging/mirum-server.service
+    dst: /usr/lib/systemd/system/mirum-server.service
+    packager: rpm
+    file_info:
+      mode: 0644
+
+  - src: packaging/mirum-worker@.service
+    dst: /usr/lib/systemd/system/mirum-worker@.service
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: packaging/mirum-worker@.service
+    dst: /usr/lib/systemd/system/mirum-worker@.service
+    packager: rpm
+    file_info:
+      mode: 0644
+
+  - src: packaging/mirum-server.initd
+    dst: /etc/init.d/mirum-server
+    packager: apk
+    file_info:
+      mode: 0755
+
+  - src: packaging/mirum-worker.initd
+    dst: /etc/init.d/mirum-worker
+    packager: apk
+    file_info:
+      mode: 0755
 
 
 scripts:
@@ -90,3 +116,10 @@ rpm:
   signature:
     key_id: ${GPG_KEY_ID}
     key_file: ${SIGNING_PRIVATE_KEY}
+
+apk:
+  signature:
+    key_file: ${APK_SIGNING_KEY}
+    # nfpm appends ".rsa.pub" to this value when embedding the signature;
+    # clients must install the public key as /etc/apk/keys/mirum.rsa.pub.
+    key_name: mirum

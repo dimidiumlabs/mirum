@@ -1,0 +1,24 @@
+#!/sbin/openrc-run
+# Copyright (c) 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+description="Mirum daemon (modern CI platform)"
+
+command="/usr/local/bin/mirum-server"
+command_args="daemon --config=/etc/mirum/server/config.yaml"
+command_user="mirum-server:mirum-server"
+
+supervisor="supervise-daemon"
+respawn_delay=30
+output_log="/var/log/mirum-server/out.log"
+error_log="/var/log/mirum-server/err.log"
+
+depend() {
+	need net
+	after firewall postgresql
+}
+
+start_pre() {
+	checkpath -d -o mirum-server:mirum-server -m 0750 /var/log/mirum-server
+	checkpath -d -o mirum-server:mirum-server -m 0750 /run/mirum-server
+}

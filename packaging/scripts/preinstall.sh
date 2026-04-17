@@ -4,11 +4,23 @@
 
 set -e
 
+nologin=/usr/sbin/nologin
+[ -x "$nologin" ] || nologin=/sbin/nologin
+[ -x "$nologin" ] || nologin=/bin/false
+
 for svc in mirum-server mirum-worker; do
-  if ! getent group $svc >/dev/null; then
-    groupadd --system $svc
+  if ! getent group "$svc" >/dev/null; then
+    if command -v groupadd >/dev/null; then
+      groupadd --system "$svc"
+    else
+      addgroup -S "$svc"
+    fi
   fi
-  if ! getent passwd $svc >/dev/null; then
-    useradd --system --gid $svc --no-create-home --shell /usr/sbin/nologin $svc
+  if ! getent passwd "$svc" >/dev/null; then
+    if command -v useradd >/dev/null; then
+      useradd --system --gid "$svc" --no-create-home --shell "$nologin" "$svc"
+    else
+      adduser -S -H -G "$svc" -s "$nologin" "$svc"
+    fi
   fi
 done
