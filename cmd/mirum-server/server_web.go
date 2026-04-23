@@ -10,11 +10,13 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -37,7 +39,7 @@ const (
 func NewWebServer(ctx context.Context, srv *server, consolePath string, consoleHandler http.Handler) *http.Server {
 	h := &webHandler{
 		srv:    srv,
-		assets: newAssetResolver(),
+		assets: newLocaleAssets(),
 	}
 
 	r := chi.NewRouter()
@@ -122,7 +124,7 @@ type actorKey struct{}
 
 type webHandler struct {
 	srv    *server
-	assets *assetResolver
+	assets *localeAssets
 }
 
 // ActorFromContext returns the authenticated actor, or AnonActor if none.
@@ -159,16 +161,41 @@ func authonly(next authedHandler) http.HandlerFunc {
 	}
 }
 
+func pageLocale(u *User, browserLocale string) string {
+	if u != nil && u.Locale != nil && u.Locale.Language != nil {
+		return *u.Locale.Language
+	}
+	if browserLocale != "" {
+		return browserLocale
+	}
+	return "en-GB"
+}
+
 func (h *webHandler) index(w http.ResponseWriter, r *http.Request, actor Actor) {
-	h.assets.renderPage(w, "dashboard", http.StatusOK, map[string]any{
-		"user": map[string]string{"email": actor.Email()},
-		"csrf": csrfToken(w, r),
+	u, err := h.srv.db.UserGet(r.Context(), actor, UserByID(actor.UserID()))
+	if err != nil {
+		h.renderError(w, r, http.StatusInternalServerError)
+		return
+	}
+	browserLocale := parseLocale(r.Header.Get("Accept-Language"))
+	locale := pageLocale(u, browserLocale)
+	h.assets.renderPage(w, "dashboard", locale, http.StatusOK, map[string]any{
+		"user":   u,
+		"csrf":   csrfToken(w, r),
+		"locale": locale,
 	})
 }
 
 // renderError serves the error page with the given HTTP status.
 func (h *webHandler) renderError(w http.ResponseWriter, r *http.Request, status int) {
-	h.assets.renderPage(w, "error", status, map[string]any{"status": status})
+	locale := parseLocale(r.Header.Get("Accept-Language"))
+	if locale == "" {
+		locale = "en-GB"
+	}
+	h.assets.renderPage(w, "error", locale, status, map[string]any{
+		"status": status,
+		"locale": locale,
+	})
 }
 
 // recoverer catches panics, logs them, and renders the 500 page so the
@@ -232,11 +259,68 @@ func (h *webHandler) loginPage(w http.ResponseWriter, r *http.Request) {
 // lands back on the login page. Reason == UNSPECIFIED means no error banner.
 // No caller writes error text itself — the client maps reason → copy.
 func (h *webHandler) renderLogin(w http.ResponseWriter, r *http.Request, status int, reason apipb.ErrorReason) {
-	data := map[string]any{"csrf": csrfToken(w, r)}
+	locale := parseLocale(r.Header.Get("Accept-Language"))
+	if locale == "" {
+		locale = "en-GB"
+	}
+	data := map[string]any{
+		"csrf":   csrfToken(w, r),
+		"locale": locale,
+	}
 	if reason != apipb.ErrorReason_ERROR_REASON_UNSPECIFIED {
 		data["errorReason"] = int32(reason)
 	}
-	h.assets.renderPage(w, "login", status, data)
+	h.assets.renderPage(w, "login", locale, status, data)
+}
+
+var supportedLocales = []string{"en-US", "en-GB"}
+
+// parseLocale picks the best supported locale from an Accept-Language header value,
+// respecting quality weights. Returns empty string if no supported locale matches.
+func parseLocale(acceptLang string) string {
+	type entry struct {
+		tag    string
+		weight float64
+	}
+
+	var entries []entry
+	for _, part := range strings.Split(acceptLang, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		tag, params, _ := strings.Cut(part, ";")
+		tag = strings.TrimSpace(tag)
+		weight := 1.0
+		if params != "" {
+			params = strings.TrimSpace(params)
+			if strings.HasPrefix(params, "q=") {
+				if _, err := fmt.Sscanf(params[2:], "%f", &weight); err != nil {
+					weight = 0
+				}
+			}
+		}
+		entries = append(entries, entry{tag, weight})
+	}
+
+	slices.SortStableFunc(entries, func(a, b entry) int {
+		if a.weight > b.weight {
+			return -1
+		}
+		if a.weight < b.weight {
+			return 1
+		}
+		return 0
+	})
+
+	for _, e := range entries {
+		for _, locale := range supportedLocales {
+			if strings.HasPrefix(e.tag, locale) {
+				return locale
+			}
+		}
+	}
+	return ""
 }
 
 func (h *webHandler) login(w http.ResponseWriter, r *http.Request) {

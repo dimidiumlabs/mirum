@@ -39,6 +39,10 @@ func mustLoadLicenses() *licensesPageData {
 }
 
 // licenses serves /about/licenses. Public: no auth, no CSRF.
-func (h *webHandler) licenses(w http.ResponseWriter, _ *http.Request) {
-	h.assets.renderPage(w, "licenses", http.StatusOK, licensesData)
+func (h *webHandler) licenses(w http.ResponseWriter, r *http.Request) {
+	locale := parseLocale(r.Header.Get("Accept-Language"))
+	if locale == "" {
+		locale = "en-GB"
+	}
+	h.assets.renderPage(w, "licenses", locale, http.StatusOK, licensesData)
 }

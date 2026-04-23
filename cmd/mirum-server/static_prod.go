@@ -25,8 +25,11 @@ const cspBase = "default-src 'self'; " +
 // For HTML pages it is overridden per-entry in renderPage.
 const csp = cspBase + "; script-src 'self'; style-src 'self'"
 
-//go:embed static/.vite/manifest.json
-var manifestJSON []byte
+//go:embed static/.vite/manifest-en-GB.json
+var manifestEnGB []byte
+
+//go:embed static/.vite/manifest-en-US.json
+var manifestEnUS []byte
 
 //go:embed static/assets
 var assetsFS embed.FS

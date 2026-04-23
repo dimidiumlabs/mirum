@@ -8,6 +8,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+const locale = process.env.LOCALE ?? "en-GB";
+
 const input = readdirSync(resolve(__dirname, "entries")).reduce(
   (acc, file) => {
     const { name } = parse(file);
@@ -21,7 +23,10 @@ export default defineConfig({
   clearScreen: false,
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: { "@": resolve(__dirname) },
+    alias: {
+      "@/messages": resolve(__dirname, "messages", `${locale}.tsx`),
+      "@": resolve(__dirname),
+    },
   },
   server: {
     host: "127.0.0.1",
@@ -30,8 +35,8 @@ export default defineConfig({
   },
   build: {
     outDir: "../static",
-    manifest: true,
-    emptyOutDir: true,
+    manifest: `.vite/manifest-${locale}.json`,
+    emptyOutDir: false,
     rollupOptions: {
       input,
       output: {

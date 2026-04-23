@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && rm -rf ../static && LOCALE=en-GB vite build && LOCALE=en-US vite build",
     "size": "size-limit",
     "lint": "eslint . && prettier --check .",
     "fmt": "prettier --write ."

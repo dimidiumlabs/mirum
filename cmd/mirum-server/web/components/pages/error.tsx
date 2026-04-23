@@ -1,42 +1,40 @@
 // Copyright (c) 2026 Nikolay Govorov
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import type { Messages } from "@/messages/types";
 import { Button } from "@/components/ui/button";
 
 export interface ErrorPageProps {
   status: number;
+  m: Messages;
 }
 
-const copy: Record<number, { title: string; body: string }> = {
-  400: { title: "Bad request", body: "The request couldn't be processed." },
-  401: { title: "Not signed in", body: "Please sign in to continue." },
-  403: {
-    title: "Forbidden",
-    body: "You don't have permission to access this page.",
-  },
-  404: {
-    title: "Not found",
-    body: "The page you were looking for doesn't exist.",
-  },
-  405: {
-    title: "Method not allowed",
-    body: "That action isn't supported here.",
-  },
-  500: {
-    title: "Something went wrong",
-    body: "An internal error occurred. Please try again.",
-  },
-  503: {
-    title: "Unavailable",
-    body: "The server is temporarily unable to handle the request.",
-  },
-};
+function errorCopy(
+  status: number,
+  m: Messages,
+): { title: string; body: string } {
+  switch (status) {
+    case 400:
+      return { title: m.error_400_title, body: m.error_400_body };
+    case 401:
+      return { title: m.error_401_title, body: m.error_401_body };
+    case 403:
+      return { title: m.error_403_title, body: m.error_403_body };
+    case 404:
+      return { title: m.error_404_title, body: m.error_404_body };
+    case 405:
+      return { title: m.error_405_title, body: m.error_405_body };
+    case 500:
+      return { title: m.error_500_title, body: m.error_500_body };
+    case 503:
+      return { title: m.error_503_title, body: m.error_503_body };
+    default:
+      return { title: `Error ${status}`, body: m.error_unknown_body };
+  }
+}
 
-export function Page({ status }: ErrorPageProps) {
-  const text = copy[status] ?? {
-    title: `Error ${status}`,
-    body: "Something went wrong.",
-  };
+export function Page({ status, m }: ErrorPageProps) {
+  const text = errorCopy(status, m);
 
   return (
     <main className="relative flex min-h-svh items-center justify-center overflow-hidden p-6">
@@ -55,7 +53,7 @@ export function Page({ status }: ErrorPageProps) {
         </h1>
         <p className="mt-3 text-sm text-foreground/80">{text.body}</p>
         <Button asChild variant="outline" size="sm" className="mt-6">
-          <a href="/">Back to home</a>
+          <a href="/">{m.back_to_home}</a>
         </Button>
       </div>
     </main>

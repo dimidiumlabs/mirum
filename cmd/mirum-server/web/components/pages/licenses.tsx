@@ -7,6 +7,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import type { Messages } from "@/messages/types";
 
 interface Dep {
   name: string;
@@ -46,6 +47,7 @@ export interface LicensesPageProps {
     go: Ecosystem;
     npm: Ecosystem;
   };
+  m: Messages;
 }
 
 function slug(s: string): string {
@@ -149,7 +151,7 @@ function EcosystemSection({
   );
 }
 
-export function Page({ primary, manifest }: LicensesPageProps) {
+export function Page({ primary, manifest, m: _m }: LicensesPageProps) {
   return (
     <article className="mx-auto max-w-[80ch] px-8 py-6 font-mono leading-[1.4]">
       <h1 className="text-4xl font-bold leading-[1.1] text-balance">

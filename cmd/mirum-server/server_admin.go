@@ -61,6 +61,8 @@ var errSpecs = []struct {
 	{ErrInvalidSlug, connect.CodeInvalidArgument, apipb.ErrorReason_ERROR_REASON_INVALID_SLUG},
 	{ErrInvalidRole, connect.CodeInvalidArgument, apipb.ErrorReason_ERROR_REASON_INVALID_ROLE},
 	{ErrReservedEmail, connect.CodeInvalidArgument, apipb.ErrorReason_ERROR_REASON_RESERVED_EMAIL},
+	{ErrInvalidDateFormat, connect.CodeInvalidArgument, apipb.ErrorReason_ERROR_REASON_INVALID_DATE_FORMAT},
+	{ErrInvalidTimezone, connect.CodeInvalidArgument, apipb.ErrorReason_ERROR_REASON_INVALID_TIMEZONE},
 	{ErrPermissionDenied, connect.CodePermissionDenied, apipb.ErrorReason_ERROR_REASON_PERMISSION_DENIED},
 	{ErrUnauthenticated, connect.CodeUnauthenticated, apipb.ErrorReason_ERROR_REASON_UNAUTHENTICATED},
 	{ErrNotImplemented, connect.CodeUnimplemented, apipb.ErrorReason_ERROR_REASON_UNIMPLEMENTED},
@@ -161,9 +163,30 @@ func pageResponse[K IDKind](items int, limit int, lastID ID[K], total int) *apip
 // --- Proto converters ---
 
 func userToProto(u User) *apipb.User {
-	return &apipb.User{
-		Id: u.ID.Bytes(), Email: u.Email, CreatedAt: timestamppb.New(u.CreatedAt),
+	pu := &apipb.User{
+		Id:        u.ID.Bytes(),
+		Email:     u.Email,
+		CreatedAt: timestamppb.New(u.CreatedAt),
+		Timezone:  u.Timezone,
 	}
+	if u.Locale != nil {
+		ls := &apipb.LocaleSettings{}
+		if u.Locale.Language != nil {
+			ls.Language = *u.Locale.Language
+		}
+		if u.Locale.DateFormat != nil {
+			switch *u.Locale.DateFormat {
+			case DateFormatDMY:
+				ls.DateFormat = apipb.DateFormat_DATE_FORMAT_DMY
+			case DateFormatMDY:
+				ls.DateFormat = apipb.DateFormat_DATE_FORMAT_MDY
+			case DateFormatYMD:
+				ls.DateFormat = apipb.DateFormat_DATE_FORMAT_YMD
+			}
+		}
+		pu.Locale = ls
+	}
+	return pu
 }
 
 func orgToProto(o Organization) *apipb.Org {
@@ -248,7 +271,33 @@ func (a *consoleService) UserUpdate(ctx context.Context, req *connect.Request[ap
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	if err := a.srv.db.UserUpdate(ctx, ActorFromContext(ctx), ref, req.Msg.Email, req.Msg.Password, []byte(a.srv.cfg.Pepper)); err != nil {
+	var locale *LocaleSettings
+	if req.Msg.Locale != nil {
+		locale = &LocaleSettings{}
+		if req.Msg.Locale.Language != "" {
+			locale.Language = &req.Msg.Locale.Language
+		}
+		if req.Msg.Locale.DateFormat != apipb.DateFormat_DATE_FORMAT_UNSPECIFIED {
+			switch req.Msg.Locale.DateFormat {
+			case apipb.DateFormat_DATE_FORMAT_DMY:
+				df := DateFormatDMY
+				locale.DateFormat = &df
+			case apipb.DateFormat_DATE_FORMAT_MDY:
+				df := DateFormatMDY
+				locale.DateFormat = &df
+			case apipb.DateFormat_DATE_FORMAT_YMD:
+				df := DateFormatYMD
+				locale.DateFormat = &df
+			}
+		}
+	}
+	if err := a.srv.db.UserUpdate(ctx, ActorFromContext(ctx), ref, UserUpdateParams{
+		Email:    req.Msg.Email,
+		Password: req.Msg.Password,
+		Pepper:   []byte(a.srv.cfg.Pepper),
+		Locale:   locale,
+		Timezone: req.Msg.Timezone,
+	}); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&apipb.UserUpdateResponse{}), nil

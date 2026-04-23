@@ -32,5 +32,6 @@ const csp = cspBase +
 	"; style-src 'self' 'unsafe-inline' " + viteDevURL
 
 // Empty in dev builds: assets are served by the Vite dev server.
-var manifestJSON []byte
+var manifestEnGB []byte
+var manifestEnUS []byte
 var assetsFS embed.FS
