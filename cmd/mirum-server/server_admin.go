@@ -60,6 +60,8 @@ var errSpecs = []struct {
 	{ErrSoleOwner, connect.CodeFailedPrecondition, apipb.ErrorReason_ERROR_REASON_SOLE_OWNER},
 	{ErrInvalidSlug, connect.CodeInvalidArgument, apipb.ErrorReason_ERROR_REASON_INVALID_SLUG},
 	{ErrInvalidRole, connect.CodeInvalidArgument, apipb.ErrorReason_ERROR_REASON_INVALID_ROLE},
+	{ErrInvalidDateFormat, connect.CodeInvalidArgument, apipb.ErrorReason_ERROR_REASON_INVALID_DATE_FORMAT},
+	{ErrInvalidTimezone, connect.CodeInvalidArgument, apipb.ErrorReason_ERROR_REASON_INVALID_TIMEZONE},
 	{ErrReservedEmail, connect.CodeInvalidArgument, apipb.ErrorReason_ERROR_REASON_RESERVED_EMAIL},
 	{ErrPermissionDenied, connect.CodePermissionDenied, apipb.ErrorReason_ERROR_REASON_PERMISSION_DENIED},
 	{ErrUnauthenticated, connect.CodeUnauthenticated, apipb.ErrorReason_ERROR_REASON_UNAUTHENTICATED},
@@ -161,9 +163,17 @@ func pageResponse[K IDKind](items int, limit int, lastID ID[K], total int) *apip
 // --- Proto converters ---
 
 func userToProto(u User) *apipb.User {
-	return &apipb.User{
+	pb := &apipb.User{
 		Id: u.ID.Bytes(), Email: u.Email, CreatedAt: timestamppb.New(u.CreatedAt),
+		Timezone: u.Timezone,
 	}
+	if u.Locale != nil {
+		pb.Locale = &apipb.Locale{
+			Language:   u.Locale.Language,
+			DateFormat: apipb.DateFormat(u.Locale.DateFormat),
+		}
+	}
+	return pb
 }
 
 func orgToProto(o Organization) *apipb.Org {
@@ -248,7 +258,18 @@ func (a *consoleService) UserUpdate(ctx context.Context, req *connect.Request[ap
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	if err := a.srv.db.UserUpdate(ctx, ActorFromContext(ctx), ref, req.Msg.Email, req.Msg.Password, []byte(a.srv.cfg.Pepper)); err != nil {
+	p := UserUpdateParams{
+		Email:    req.Msg.Email,
+		Password: req.Msg.Password,
+		Timezone: req.Msg.Timezone,
+	}
+	if req.Msg.Locale != nil {
+		p.Locale = &Locale{
+			Language:   req.Msg.Locale.Language,
+			DateFormat: DateFormat(req.Msg.Locale.DateFormat),
+		}
+	}
+	if err := a.srv.db.UserUpdate(ctx, ActorFromContext(ctx), ref, p, []byte(a.srv.cfg.Pepper)); err != nil {
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(&apipb.UserUpdateResponse{}), nil

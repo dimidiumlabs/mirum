@@ -32,25 +32,27 @@ import (
 )
 
 var (
-	ErrAcquire        = errors.New("database: failed to acquire connection")
-	ErrAlreadyMember  = errors.New("database: already a member")
-	ErrEmailTaken     = errors.New("database: email already taken")
-	ErrInvalidCreds   = errors.New("database: invalid credentials")
-	ErrInvalidEmail   = errors.New("database: invalid email")
-	ErrInvalidRole    = errors.New("database: invalid role")
-	ErrInvalidSlug    = errors.New("database: invalid slug")
-	ErrLastOwner      = errors.New("database: last owner")
-	ErrMigrate        = errors.New("database: failed to create migrator")
-	ErrNotImplemented = errors.New("database: filter not implemented")
-	ErrNotMember      = errors.New("database: not a member")
-	ErrOpen           = errors.New("database: failed to open")
-	ErrOrgNotFound    = errors.New("database: organization not found")
-	ErrPing           = errors.New("database: failed to ping")
-	ErrReservedEmail  = errors.New("database: email uses a reserved domain")
-	ErrSlugTaken      = errors.New("database: slug already taken")
-	ErrSoleOwner      = errors.New("database: sole owner of an organization")
-	ErrUserNotFound   = errors.New("database: user not found")
-	ErrWorkerNotFound = errors.New("database: worker not found")
+	ErrAcquire           = errors.New("database: failed to acquire connection")
+	ErrAlreadyMember     = errors.New("database: already a member")
+	ErrEmailTaken        = errors.New("database: email already taken")
+	ErrInvalidCreds      = errors.New("database: invalid credentials")
+	ErrInvalidEmail      = errors.New("database: invalid email")
+	ErrInvalidRole       = errors.New("database: invalid role")
+	ErrInvalidSlug       = errors.New("database: invalid slug")
+	ErrInvalidDateFormat = errors.New("database: invalid date format")
+	ErrInvalidTimezone   = errors.New("database: invalid timezone")
+	ErrLastOwner         = errors.New("database: last owner")
+	ErrMigrate           = errors.New("database: failed to create migrator")
+	ErrNotImplemented    = errors.New("database: filter not implemented")
+	ErrNotMember         = errors.New("database: not a member")
+	ErrOpen              = errors.New("database: failed to open")
+	ErrOrgNotFound       = errors.New("database: organization not found")
+	ErrPing              = errors.New("database: failed to ping")
+	ErrReservedEmail     = errors.New("database: email uses a reserved domain")
+	ErrSlugTaken         = errors.New("database: slug already taken")
+	ErrSoleOwner         = errors.New("database: sole owner of an organization")
+	ErrUserNotFound      = errors.New("database: user not found")
+	ErrWorkerNotFound    = errors.New("database: worker not found")
 )
 
 // reservedEmailSuffix is the domain carved out for synthetic actors
@@ -109,11 +111,26 @@ type DB struct {
 	Pool *pgxpool.Pool
 }
 
+type DateFormat int
+
+const (
+	DateFormatDMY DateFormat = 1
+	DateFormatMDY DateFormat = 2
+	DateFormatYMD DateFormat = 3
+)
+
+type Locale struct {
+	Language   string
+	DateFormat DateFormat
+}
+
 // User holds info about a user.
 type User struct {
 	ID        UserID
 	Email     string
 	CreatedAt time.Time
+	Locale    *Locale
+	Timezone  *string
 }
 
 // Organization holds info about an organization.
@@ -214,6 +231,12 @@ func (db *DB) Migrate(ctx context.Context) error {
 	}
 
 	migrator.AppendMigration("create_users", `
+		CREATE TYPE date_format_t AS ENUM ('dmy', 'mdy', 'ymd');
+		CREATE TYPE locale_settings AS (
+			language    TEXT,
+			date_format date_format_t
+		);
+
 		CREATE TABLE users (
 			id         UUID PRIMARY KEY DEFAULT uuidv7(),
 			email      TEXT NOT NULL UNIQUE,
@@ -221,6 +244,9 @@ func (db *DB) Migrate(ctx context.Context) error {
 			superuser  BOOLEAN NOT NULL DEFAULT false,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			deleted_at TIMESTAMPTZ
+
+			locale     locale_settings
+		    timezone   TEXT
 		 );
 
 		CREATE FUNCTION app_user_id() RETURNS uuid STABLE AS $$
@@ -244,6 +270,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 				);
 		$$ LANGUAGE sql;
 	`, `
+		DROP TYPE locale_settings;
+		DROP TYPE date_format_t;
 		DROP FUNCTION app_issuper;
 		DROP FUNCTION app_user_id;
 		DROP TABLE users;
@@ -480,17 +508,32 @@ func (db *DB) UserGet(ctx context.Context, actor Actor, ref UserRef) (*User, err
 			col, val := ref.where()
 
 			q := sb.PostgreSQL.NewSelectBuilder()
-			sql, args := q.Select("id", "email", "created_at").
+			sql, args := q.Select("id", "email", "created_at",
+				"(locale).language", "(locale).date_format", "timezone").
 				From("users").
 				Where(q.Equal(col, val), q.IsNull("deleted_at")).
 				Build()
 
-			if err := tx.QueryRow(ctx, sql, args...).Scan(&u.ID, &u.Email, &u.CreatedAt); err != nil {
+			var lang, df, tz *string
+			if err := tx.QueryRow(ctx, sql, args...).Scan(
+				&u.ID, &u.Email, &u.CreatedAt, &lang, &df, &tz,
+			); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return ErrUserNotFound
 				}
 				return err
 			}
+			if lang != nil || df != nil {
+				loc := &Locale{}
+				if lang != nil {
+					loc.Language = *lang
+				}
+				if df != nil {
+					loc.DateFormat = sqlToDateFormat(*df)
+				}
+				u.Locale = loc
+			}
+			u.Timezone = tz
 
 			return nil
 		},
@@ -547,10 +590,17 @@ func (db *DB) UserList(ctx context.Context, actor Actor, cursor UserID, limit in
 	return users, total, err
 }
 
+type UserUpdateParams struct {
+	Email    *string
+	Password *string
+	Locale   *Locale
+	Timezone *string
+}
+
 // UserUpdate updates a user's email and/or password.
 // Invalidates all sessions when password changes.
-func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *string, password *string, pepper []byte) error {
-	if email == nil && password == nil {
+func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, p UserUpdateParams, pepper []byte) error {
+	if p.Email == nil && p.Password == nil {
 		return nil
 	}
 
@@ -565,8 +615,13 @@ func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *s
 			return checkSelf(actor, id)
 		},
 		func(tx pgx.Tx) error {
-			if email != nil && strings.HasSuffix(strings.ToLower(*email), reservedEmailSuffix) {
+			if p.Email != nil && strings.HasSuffix(strings.ToLower(*p.Email), reservedEmailSuffix) {
 				return ErrReservedEmail
+			}
+			if p.Timezone != nil {
+				if _, err := time.LoadLocation(*p.Timezone); err != nil {
+					return ErrInvalidTimezone
+				}
 			}
 			return nil
 		},
@@ -574,15 +629,34 @@ func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *s
 			ub := sb.PostgreSQL.NewUpdateBuilder()
 			ub.Update("users")
 
-			if email != nil {
-				ub.SetMore(ub.Assign("email", *email))
+			var hasSet bool
+			if p.Email != nil {
+				ub.SetMore(ub.Assign("email", *p.Email))
+				hasSet = true
 			}
-			if password != nil {
-				hash, err := hashPassword(*password, pepper)
+			if p.Password != nil {
+				hash, err := hashPassword(*p.Password, pepper)
 				if err != nil {
 					return err
 				}
 				ub.SetMore(ub.Assign("password", hash))
+				hasSet = true
+			}
+			if p.Locale != nil {
+				lang := &p.Locale.Language
+				df := dateFormatToSQL(p.Locale.DateFormat)
+				ub.SetMore(fmt.Sprintf(
+					"locale = ROW(COALESCE(%s, (locale).language), COALESCE(%s::date_format_t, (locale).date_format))::locale_settings",
+					ub.Var(lang), ub.Var(df),
+				))
+				hasSet = true
+			}
+			if p.Timezone != nil {
+				ub.SetMore(ub.Assign("timezone", *p.Timezone))
+				hasSet = true
+			}
+			if !hasSet {
+				return nil
 			}
 			ub.Where(ub.Equal("id", id))
 
@@ -595,7 +669,7 @@ func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *s
 				return err
 			}
 
-			if password != nil {
+			if p.Password != nil {
 				if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
 					return err
 				}
@@ -603,6 +677,34 @@ func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *s
 			return nil
 		},
 	)
+}
+
+func dateFormatToSQL(df DateFormat) *string {
+	var s string
+	switch df {
+	case DateFormatDMY:
+		s = "dmy"
+	case DateFormatMDY:
+		s = "mdy"
+	case DateFormatYMD:
+		s = "ymd"
+	default:
+		return nil
+	}
+	return &s
+}
+
+func sqlToDateFormat(s string) DateFormat {
+	switch s {
+	case "dmy":
+		return DateFormatDMY
+	case "mdy":
+		return DateFormatMDY
+	case "ymd":
+		return DateFormatYMD
+	default:
+		return 0
+	}
 }
 
 // UserDelete soft-deletes a user.
