@@ -95,6 +95,9 @@ enum ErrorReason {
   ERROR_REASON_INVALID_SLUG = 40;
   ERROR_REASON_INVALID_ROLE = 41;
   ERROR_REASON_RESERVED_EMAIL = 42;
+  ERROR_REASON_INVALID_LOCALE = 43;
+  ERROR_REASON_INVALID_DATE_FORMAT = 44;
+  ERROR_REASON_INVALID_TIMEZONE = 45;
 
   // Auth
   ERROR_REASON_UNAUTHENTICATED = 50;
@@ -144,10 +147,25 @@ message PageResponse {
 
 // User management
 
+message Locale {
+  string language = 1;
+  DateFormat date_format = 2;
+}
+
+enum DateFormat {
+  DATE_FORMAT_UNSPECIFIED = 0;
+  DATE_FORMAT_DMY = 1;
+  DATE_FORMAT_MDY = 2;
+  DATE_FORMAT_YMD = 3;
+}
+
 message User {
   bytes id = 1;
   string email = 2;
   google.protobuf.Timestamp created_at = 3;
+  
+  optional Locale locale = 4;
+  optional string timezone = 5;
 }
 
 message UserCreateRequest {
@@ -178,6 +196,8 @@ message UserUpdateRequest {
   UserRef user = 1 [(buf.validate.field).required = true];
   optional string email = 2 [(buf.validate.field).string.email = true];
   optional string password = 3 [(buf.validate.field).string.min_len = 1];
+  optional Locale locale = 4;
+  optional string timezone = 5;
 }
 message UserUpdateResponse {}
 
