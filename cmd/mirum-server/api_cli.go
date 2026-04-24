@@ -232,6 +232,45 @@ func registerMessageField(cmd *cobra.Command, fd protoreflect.FieldDescriptor, f
 
 	case "mirum.api.PageRequest":
 		return nil
+
+	case "mirum.api.Locale":
+		langFlag := flagName + "-language"
+		dfFlag := flagName + "-date-format"
+		flags.String(langFlag, "", "locale language (e.g. en)")
+		flags.String(dfFlag, "", "date format (DMY, MDY, YMD)")
+		return func(fs *pflag.FlagSet, m protoreflect.Message) error {
+			lang, _ := fs.GetString(langFlag)
+			dfStr, _ := fs.GetString(dfFlag)
+			if lang == "" && dfStr == "" {
+				return nil
+			}
+			loc := &apipb.Locale{}
+			if lang != "" {
+				loc.Language = &lang
+			}
+			if dfStr != "" {
+				want := strings.ToUpper(dfStr)
+				enumVals := loc.ProtoReflect().Descriptor().Fields().ByName("date_format").Enum().Values()
+				var n protoreflect.EnumNumber
+				var found bool
+				for i := 0; i < enumVals.Len(); i++ {
+					ev := enumVals.Get(i)
+					name := string(ev.Name())
+					if idx := strings.LastIndexByte(name, '_'); idx >= 0 && strings.ToUpper(name[idx+1:]) == want {
+						n = ev.Number()
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("--%s: unknown value %q (valid: DMY, MDY, YMD)", dfFlag, dfStr)
+				}
+				df := apipb.DateFormat(n)
+				loc.DateFormat = &df
+			}
+			m.Set(fd, protoreflect.ValueOfMessage(loc.ProtoReflect()))
+			return nil
+		}
 	}
 
 	if required {
