@@ -32,25 +32,27 @@ import (
 )
 
 var (
-	ErrAcquire        = errors.New("database: failed to acquire connection")
-	ErrAlreadyMember  = errors.New("database: already a member")
-	ErrEmailTaken     = errors.New("database: email already taken")
-	ErrInvalidCreds   = errors.New("database: invalid credentials")
-	ErrInvalidEmail   = errors.New("database: invalid email")
-	ErrInvalidRole    = errors.New("database: invalid role")
-	ErrInvalidSlug    = errors.New("database: invalid slug")
-	ErrLastOwner      = errors.New("database: last owner")
-	ErrMigrate        = errors.New("database: failed to create migrator")
-	ErrNotImplemented = errors.New("database: filter not implemented")
-	ErrNotMember      = errors.New("database: not a member")
-	ErrOpen           = errors.New("database: failed to open")
-	ErrOrgNotFound    = errors.New("database: organization not found")
-	ErrPing           = errors.New("database: failed to ping")
-	ErrReservedEmail  = errors.New("database: email uses a reserved domain")
-	ErrSlugTaken      = errors.New("database: slug already taken")
-	ErrSoleOwner      = errors.New("database: sole owner of an organization")
-	ErrUserNotFound   = errors.New("database: user not found")
-	ErrWorkerNotFound = errors.New("database: worker not found")
+	ErrAcquire           = errors.New("database: failed to acquire connection")
+	ErrAlreadyMember     = errors.New("database: already a member")
+	ErrEmailTaken        = errors.New("database: email already taken")
+	ErrInvalidCreds      = errors.New("database: invalid credentials")
+	ErrInvalidEmail      = errors.New("database: invalid email")
+	ErrInvalidRole       = errors.New("database: invalid role")
+	ErrInvalidSlug       = errors.New("database: invalid slug")
+	ErrInvalidDateFormat = errors.New("database: invalid date format")
+	ErrInvalidTimezone   = errors.New("database: invalid timezone")
+	ErrLastOwner         = errors.New("database: last owner")
+	ErrMigrate           = errors.New("database: failed to create migrator")
+	ErrNotImplemented    = errors.New("database: filter not implemented")
+	ErrNotMember         = errors.New("database: not a member")
+	ErrOpen              = errors.New("database: failed to open")
+	ErrOrgNotFound       = errors.New("database: organization not found")
+	ErrPing              = errors.New("database: failed to ping")
+	ErrReservedEmail     = errors.New("database: email uses a reserved domain")
+	ErrSlugTaken         = errors.New("database: slug already taken")
+	ErrSoleOwner         = errors.New("database: sole owner of an organization")
+	ErrUserNotFound      = errors.New("database: user not found")
+	ErrWorkerNotFound    = errors.New("database: worker not found")
 )
 
 // reservedEmailSuffix is the domain carved out for synthetic actors
@@ -109,11 +111,26 @@ type DB struct {
 	Pool *pgxpool.Pool
 }
 
+type DateFormat int
+
+const (
+	DateFormatDMY DateFormat = 1
+	DateFormatMDY DateFormat = 2
+	DateFormatYMD DateFormat = 3
+)
+
+type Locale struct {
+	Language   *string
+	DateFormat *DateFormat
+}
+
 // User holds info about a user.
 type User struct {
 	ID        UserID
 	Email     string
 	CreatedAt time.Time
+	Locale    *Locale
+	Timezone  *string
 }
 
 // Organization holds info about an organization.
@@ -214,13 +231,21 @@ func (db *DB) Migrate(ctx context.Context) error {
 	}
 
 	migrator.AppendMigration("create_users", `
+		CREATE TYPE locale_settings AS (
+			language    TEXT,
+			date_format INTEGER
+		);
+
 		CREATE TABLE users (
 			id         UUID PRIMARY KEY DEFAULT uuidv7(),
 			email      TEXT NOT NULL UNIQUE,
 			password   TEXT NOT NULL,
 			superuser  BOOLEAN NOT NULL DEFAULT false,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-			deleted_at TIMESTAMPTZ
+			deleted_at TIMESTAMPTZ,
+
+			locale     locale_settings,
+		    timezone   TEXT
 		 );
 
 		CREATE FUNCTION app_user_id() RETURNS uuid STABLE AS $$
@@ -244,6 +269,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 				);
 		$$ LANGUAGE sql;
 	`, `
+		DROP TYPE locale_settings;
+		DROP TYPE date_format_t;
 		DROP FUNCTION app_issuper;
 		DROP FUNCTION app_user_id;
 		DROP TABLE users;
@@ -480,12 +507,16 @@ func (db *DB) UserGet(ctx context.Context, actor Actor, ref UserRef) (*User, err
 			col, val := ref.where()
 
 			q := sb.PostgreSQL.NewSelectBuilder()
-			sql, args := q.Select("id", "email", "created_at").
+			sql, args := q.Select("id", "email", "created_at",
+				"(locale).language", "(locale).date_format", "timezone").
 				From("users").
 				Where(q.Equal(col, val), q.IsNull("deleted_at")).
 				Build()
 
-			if err := tx.QueryRow(ctx, sql, args...).Scan(&u.ID, &u.Email, &u.CreatedAt); err != nil {
+			u.Locale = &Locale{}
+			if err := tx.QueryRow(ctx, sql, args...).Scan(
+				&u.ID, &u.Email, &u.CreatedAt, &u.Locale.Language, &u.Locale.DateFormat, &u.Timezone,
+			); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return ErrUserNotFound
 				}
@@ -518,7 +549,8 @@ func (db *DB) UserList(ctx context.Context, actor Actor, cursor UserID, limit in
 			}
 
 			q := sb.PostgreSQL.NewSelectBuilder()
-			q.Select("id", "email", "created_at").
+			q.Select("id", "email", "created_at",
+				"(locale).language", "(locale).date_format", "timezone").
 				From("users").
 				Where(q.IsNull("deleted_at")).
 				OrderBy("id").
@@ -536,7 +568,8 @@ func (db *DB) UserList(ctx context.Context, actor Actor, cursor UserID, limit in
 
 			for rows.Next() {
 				var u User
-				if err := rows.Scan(&u.ID, &u.Email, &u.CreatedAt); err != nil {
+				u.Locale = &Locale{}
+				if err := rows.Scan(&u.ID, &u.Email, &u.CreatedAt, &u.Locale.Language, &u.Locale.DateFormat, &u.Timezone); err != nil {
 					return err
 				}
 				users = append(users, u)
@@ -547,13 +580,16 @@ func (db *DB) UserList(ctx context.Context, actor Actor, cursor UserID, limit in
 	return users, total, err
 }
 
+type UserUpdateParams struct {
+	Email    *string
+	Password *string
+	Locale   *Locale
+	Timezone *string
+}
+
 // UserUpdate updates a user's email and/or password.
 // Invalidates all sessions when password changes.
-func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *string, password *string, pepper []byte) error {
-	if email == nil && password == nil {
-		return nil
-	}
-
+func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, p UserUpdateParams, pepper []byte) error {
 	var id UserID
 	return db.apicall(ctx, actor,
 		func(tx pgx.Tx) error {
@@ -565,8 +601,13 @@ func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *s
 			return checkSelf(actor, id)
 		},
 		func(tx pgx.Tx) error {
-			if email != nil && strings.HasSuffix(strings.ToLower(*email), reservedEmailSuffix) {
+			if p.Email != nil && strings.HasSuffix(strings.ToLower(*p.Email), reservedEmailSuffix) {
 				return ErrReservedEmail
+			}
+			if p.Timezone != nil {
+				if _, err := time.LoadLocation(*p.Timezone); err != nil {
+					return ErrInvalidTimezone
+				}
 			}
 			return nil
 		},
@@ -574,15 +615,32 @@ func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *s
 			ub := sb.PostgreSQL.NewUpdateBuilder()
 			ub.Update("users")
 
-			if email != nil {
-				ub.SetMore(ub.Assign("email", *email))
+			var hasSet bool
+			if p.Email != nil {
+				ub.SetMore(ub.Assign("email", *p.Email))
+				hasSet = true
 			}
-			if password != nil {
-				hash, err := hashPassword(*password, pepper)
+			if p.Password != nil {
+				hash, err := hashPassword(*p.Password, pepper)
 				if err != nil {
 					return err
 				}
 				ub.SetMore(ub.Assign("password", hash))
+				hasSet = true
+			}
+			if p.Locale != nil {
+				ub.SetMore(fmt.Sprintf(
+					"locale = ROW(COALESCE(%s, (locale).language), COALESCE(%s, (locale).date_format))::locale_settings",
+					ub.Var(p.Locale.Language), ub.Var(p.Locale.DateFormat),
+				))
+				hasSet = true
+			}
+			if p.Timezone != nil {
+				ub.SetMore(ub.Assign("timezone", *p.Timezone))
+				hasSet = true
+			}
+			if !hasSet {
+				return nil
 			}
 			ub.Where(ub.Equal("id", id))
 
@@ -595,7 +653,7 @@ func (db *DB) UserUpdate(ctx context.Context, actor Actor, ref UserRef, email *s
 				return err
 			}
 
-			if password != nil {
+			if p.Password != nil {
 				if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
 					return err
 				}

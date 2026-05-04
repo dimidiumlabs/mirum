@@ -47,6 +47,10 @@ export function textForReason(reason: ErrorReason): string {
       return "Invalid slug. Use lowercase letters, digits, and hyphens.";
     case ErrorReason.INVALID_ROLE:
       return "Invalid role.";
+    case ErrorReason.INVALID_DATE_FORMAT:
+      return "Invalid date format.";
+    case ErrorReason.INVALID_TIMEZONE:
+      return "Invalid timezone.";
     case ErrorReason.RESERVED_EMAIL:
       return "This email domain is reserved. Please use a different address.";
     case ErrorReason.UNAUTHENTICATED:
