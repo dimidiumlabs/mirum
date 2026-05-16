@@ -19,6 +19,8 @@ import (
 	"dimidiumlabs/mirum/internal/protocol"
 	"dimidiumlabs/mirum/internal/protocol/wirepb"
 	"dimidiumlabs/mirum/internal/protocol/wirepb/wirepbconnect"
+
+	_ "dimidiumlabs/mirum/internal/executor/host" // registers the host Runtime backend
 )
 
 type client struct {
@@ -98,7 +100,7 @@ func (c *client) work(ctx context.Context) error {
 		task := resp.Msg
 		slog.Info("task received", "id", task.Id, "repo", task.RepoFullName)
 
-		execErr := executor.Run(task.CloneUrl, task.Branch)
+		execErr := executor.Run(ctx, task.CloneUrl, task.Branch)
 
 		result := &wirepb.TaskResult{TaskId: task.Id, Success: execErr == nil}
 		if execErr != nil {

@@ -1,15 +1,14 @@
 // Copyright (c) 2026 Nikolay Govorov
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Runtime executing the Starlark pipeline in one of the supported runtimes
 package executor
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
-	"path/filepath"
 
 	"go.starlark.net/starlark"
 	"go.starlark.net/syntax"
@@ -17,85 +16,39 @@ import (
 
 const entry = ".mirum/project.star"
 
-func RunCmd(dir, name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-
-	err := cmd.Run()
-	return buf.String(), err
-}
-
-type SOTaskCtx struct {
-	dir string
-}
-
-var _ starlark.HasAttrs = (*SOTaskCtx)(nil)
-
-func (c *SOTaskCtx) String() string        { return "ctx" }
-func (c *SOTaskCtx) Type() string          { return "ctx" }
-func (c *SOTaskCtx) Freeze()               {}
-func (c *SOTaskCtx) Truth() starlark.Bool  { return true }
-func (c *SOTaskCtx) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable: ctx") }
-func (c *SOTaskCtx) AttrNames() []string   { return []string{"shell"} }
-
-func (c *SOTaskCtx) Attr(name string) (starlark.Value, error) {
-	switch name {
-	case "shell":
-		return starlark.NewBuiltin("ctx.shell", c.shell), nil
-	}
-	return nil, nil
-}
-
-func (c *SOTaskCtx) shell(
-	thread *starlark.Thread,
-	fn *starlark.Builtin,
-	args starlark.Tuple,
-	kwargs []starlark.Tuple,
-) (starlark.Value, error) {
-	var cmd string
-	if err := starlark.UnpackPositionalArgs(fn.Name(), args, kwargs, 1, &cmd); err != nil {
-		return nil, err
-	}
-
-	proc := exec.Command("bash", "-c", cmd)
-	proc.Dir = c.dir
-	proc.Stdout = os.Stdout
-	proc.Stderr = os.Stderr
-	err := proc.Run()
+// Run selects a Runtime, clones the repository into it, runs the Starlark
+// build script, and discards the Runtime afterwards.
+func Run(ctx context.Context, cloneURL, branch string) error {
+	rt, err := NewRuntime()
 	if err != nil {
-		return nil, err
-	}
-
-	return starlark.None, nil
-}
-
-// Run clones the repository into a temporary directory, runs the Starlark
-// build script, and cleans up afterwards.
-func Run(cloneURL, branch string) error {
-	dir, err := os.MkdirTemp("", "mirum-*")
-	if err != nil {
-		return fmt.Errorf("create workdir: %w", err)
+		return fmt.Errorf("create runtime: %w", err)
 	}
 	defer func() {
-		if err := os.RemoveAll(dir); err != nil {
-			slog.Warn("executor: cleanup failed", "dir", dir, "err", err)
+		if err := rt.Close(); err != nil {
+			slog.Warn("executor: runtime cleanup failed", "err", err)
 		}
 	}()
 
-	if out, err := RunCmd(dir, "git", "clone", "--depth=1", "--branch", branch, cloneURL, "."); err != nil {
-		return fmt.Errorf("git clone: %s: %w", out, err)
+	var clone bytes.Buffer
+	res, err := rt.Exec(ctx, Command{
+		Args:   []string{"git", "clone", "--depth=1", "--branch", branch, cloneURL, "."},
+		Stdout: &clone,
+		Stderr: &clone,
+	})
+	if err != nil {
+		return fmt.Errorf("git clone: %w", err)
+	}
+	if res.Code != 0 {
+		return fmt.Errorf("git clone exited with code %d: %s", res.Code, clone.String())
 	}
 
-	return runStarlark(dir)
-}
+	var script bytes.Buffer
+	if err := rt.FileRecv(ctx, entry, &script); err != nil {
+		return fmt.Errorf("read %s: %w", entry, err)
+	}
 
-func runStarlark(dir string) error {
 	thread := &starlark.Thread{Name: "mirum"}
-	globals, err := starlark.ExecFileOptions(&syntax.FileOptions{}, thread, filepath.Join(dir, entry), nil, nil)
+	globals, err := starlark.ExecFileOptions(&syntax.FileOptions{}, thread, entry, script.Bytes(), nil)
 	if err != nil {
 		return err
 	}
@@ -109,7 +62,7 @@ func runStarlark(dir string) error {
 		return fmt.Errorf("%s: project is not a function", entry)
 	}
 
-	ctx := &SOTaskCtx{dir: dir}
-	_, err = starlark.Call(thread, fn, starlark.Tuple{ctx}, nil)
+	tctx := &SOTaskCtx{ctx: ctx, rt: rt}
+	_, err = starlark.Call(thread, fn, starlark.Tuple{tctx}, nil)
 	return err
 }
