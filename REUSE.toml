@@ -8,6 +8,7 @@ path = [
   ".mailmap",
   "CLA.md",
   "VERSION",
+  "cmd/mirum-agent/build.zig.zon",
   "cmd/mirum-server/web/*.json",
   "go.mod",
   "go.sum",

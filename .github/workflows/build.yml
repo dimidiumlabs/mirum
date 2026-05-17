@@ -29,6 +29,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          mirror: https://pkg.earth/zig # maintained by mirum author
+          version: 0.16.0 # keep in sync with build.zig.zon
+
       - name: Install tools
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list

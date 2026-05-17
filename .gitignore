@@ -7,6 +7,11 @@
 cmd/mirum-server/static
 cmd/mirum-server/web/node_modules
 
+# zig build artifacts
+.zig-cache/
+zig-out/
+zig-pkg/
+
 # grpc generated code
 /internal/protocol/wirepb
 /cmd/mirum-server/apipb

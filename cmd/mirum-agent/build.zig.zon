@@ -1,0 +1,17 @@
+.{
+    .name = .agent,
+    .version = "0.0.0",
+    .fingerprint = 0x268b9c9d6e24fb9b, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0", // keep in sync with github actions
+    .dependencies = .{
+        .unity = .{
+            .url = "https://github.com/ThrowTheSwitch/Unity/archive/refs/tags/v2.6.1.tar.gz",
+            .hash = "N-V-__8AAAQfEgAjW551lOzfHoVAve6KndztgTjCXsJvElP9",
+        },
+    },
+    .paths = .{
+        "build.zig",     "build.zig.zon",
+        "test.c",        "main.c",
+        "mirum-agent.c", "mirum-agent.h",
+    },
+}

@@ -33,6 +33,13 @@ contents:
     file_info:
       mode: 0755
 
+  # mirum-agent guest binaries — payload the worker injects into VMs.
+  # Not host executables; the full guest matrix ships in every package.
+  - src: build/agent/mirum-agent-*
+    dst: /usr/lib/mirum/agent/
+    file_info:
+      mode: 0755
+
   - src: packaging/server/config.yaml
     dst: /etc/mirum/server/config.yaml
     type: config|noreplace

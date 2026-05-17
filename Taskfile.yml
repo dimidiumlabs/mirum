@@ -16,6 +16,15 @@ vars:
   DIST_DIR: build/dist
   BUILD_DIR: build
   LINUX_PKG_TARGETS: amd64 arm64 riscv64 ppc64le loong64 s390x
+  # Guest matrix for mirum-agent — a strict superset of the host cross
+  # matrix. Extend here as more guest targets are supported.
+  AGENT_TARGETS: >-
+    linux-amd64 linux-arm64 linux-riscv64 linux-ppc64le linux-loong64 linux-s390x
+    darwin-amd64 darwin-arm64
+    windows-amd64 windows-arm64
+    freebsd-amd64 freebsd-arm64 freebsd-riscv64
+    netbsd-amd64 netbsd-arm64
+    openbsd-amd64 openbsd-arm64
 
 tasks:
   # Production build pipeline
@@ -114,8 +123,55 @@ tasks:
       - go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/mirum-worker-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum-worker
       - go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/mirum-{{.GOOS}}-{{.GOARCH}} ./cmd/mirum
 
+  agent:build:
+    desc: "Build mirum-agent for one guest target (override GOOS/GOARCH)"
+    dir: cmd/mirum-agent
+    vars:
+      GOOS: { sh: "echo ${GOOS:-$(go env GOOS)}" }
+      GOARCH: { sh: "echo ${GOARCH:-$(go env GOARCH)}" }
+    cmds:
+      - |
+        case "{{.GOARCH}}" in
+          amd64)   za=x86_64      ;;
+          arm64)   za=aarch64     ;;
+          riscv64) za=riscv64     ;;
+          ppc64le) za=powerpc64le ;;
+          loong64) za=loongarch64 ;;
+          s390x)   za=s390x       ;;
+          *) echo "agent: unsupported arch {{.GOARCH}}" >&2; exit 1 ;;
+        esac
+        case "{{.GOOS}}" in
+          linux)   ztriple="${za}-linux"       ;;
+          darwin)  ztriple="${za}-macos"       ;;
+          windows) ztriple="${za}-windows-gnu" ;;
+          freebsd) ztriple="${za}-freebsd"     ;;
+          openbsd) ztriple="${za}-openbsd"     ;;
+          netbsd)  ztriple="${za}-netbsd"      ;;
+          *) echo "agent: unsupported os {{.GOOS}}" >&2; exit 1 ;;
+        esac
+        ext=""; [ "{{.GOOS}}" = windows ] && ext=.exe
+        zig build -Dtarget="$ztriple" -Doptimize=ReleaseFast -Dstrip
+        mkdir -p ../../{{.BUILD_DIR}}/agent
+        cp "zig-out/bin/mirum-agent${ext}" "../../{{.BUILD_DIR}}/agent/mirum-agent-{{.GOOS}}-{{.GOARCH}}${ext}"
+
+  agent:cross:
+    desc: Cross-compile mirum-agent for the full guest matrix
+    cmds:
+      - rm -rf {{.BUILD_DIR}}/agent
+      - for: { var: AGENT_TARGETS }
+        cmd: |
+          target="{{.ITEM}}"
+          task agent:build GOOS="${target%-*}" GOARCH="${target##*-}"
+
+  agent:test:
+    desc: Build and run mirum-agent unit tests
+    dir: cmd/mirum-agent
+    cmds:
+      - zig build test
+
   cross:
     desc: Cross-compile and archive binaries for all supported platforms
+    deps: [agent:cross]
     cmds:
       - mkdir -p {{.DIST_DIR}}
       - for: [
@@ -140,8 +196,10 @@ tasks:
           cp -r LICENSES "$staging/"
           for cmd in cmd/*/; do
             bin=$(basename "$cmd")
+            [ "$bin" = "mirum-agent" ] && continue
             cp "{{.BUILD_DIR}}/${bin}-${os}-${arch}" "${staging}/${bin}${ext}"
           done
+          cp -r "{{.BUILD_DIR}}/agent" "$staging/agent"
 
           if [ "$os" = "windows" ]; then
             (cd "$staging" && zip -qr "$OLDPWD/{{.DIST_DIR}}/mirum-${target}.zip" .)
@@ -198,6 +256,7 @@ tasks:
           mkdir -p {{.BUILD_DIR}}/tmp
           for cmd in cmd/*/; do
             bin=$(basename "$cmd")
+            [ "$bin" = "mirum-agent" ] && continue
             cp "{{.BUILD_DIR}}/${bin}-linux-${arch}" "{{.BUILD_DIR}}/tmp/${bin}"
           done
           ARCH=$arch nfpm package --packager deb --target {{.DIST_DIR}}/
@@ -515,5 +574,6 @@ tasks:
       CGO_ENABLED: "1" # required for -race
     cmds:
       - go test -race -count=1 ./...
+      - task: agent:test
 
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
