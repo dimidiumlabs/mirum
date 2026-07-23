@@ -506,6 +506,12 @@ tasks:
     cmds:
       - mise run signoff
 
+  legal:
+    desc: Verify contribution and licensing policy
+    cmds:
+      - task: signoff
+      - mise run licenses
+
   web:lint:
     desc: Lint and check the frontend
     dir: cmd/mirum-server/web
@@ -527,10 +533,8 @@ tasks:
     desc: Run static checks
     deps: [go:lint, web:lint]
     cmds:
-      - task: signoff
       - task: go:lint
       - task: web:lint
-      - reuse lint
 
   test:
     desc: Run all tests
