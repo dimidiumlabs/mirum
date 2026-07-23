@@ -4,6 +4,8 @@
 /dev
 /build
 /.task
+mise.local.toml
+mise.*.local.toml
 cmd/mirum-server/static
 cmd/mirum-server/web/node_modules
 

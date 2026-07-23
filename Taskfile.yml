@@ -501,45 +501,10 @@ tasks:
     deps: [web:dev, dev:server]
 
   # Test and lint checks
-  signof:
-    desc: Verifies that the author is known and has signed the CLA
+  signoff:
+    desc: Verify contributor identities and commit sign-offs
     cmds:
-      - |
-        ALLOWLIST="Nikolay Govorov|github-actions\\[bot\\]"
-
-        bad=0
-        for sha in $(git log --no-merges --format=%H); do
-          author=$(git log -1 --format='%an' "$sha")
-          if echo "$author" | grep -qP "^($ALLOWLIST)$"; then
-            continue
-          fi
-
-          email=$(git log -1 --format='%ae' "$sha")
-          expected="${author} <${email}>"
-          if ! git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qF "$expected"; then
-            echo "Commit ${sha:0:8} by ${expected} is missing a valid Signed-off-by"
-            bad=1
-          fi
-        done
-
-        if [ "$bad" -eq 1 ]; then
-          echo "All commits must be signed off (git commit -s). See CLA.md"
-          exit 1
-        fi
-
-        # Check that all authors and committers are in .mailmap
-        missing=0
-        for email in $(git log --no-merges --format='%ae%n%ce' | sort -u); do
-          if ! grep -v '^#' .mailmap | grep -qF "<${email}>"; then
-            echo "Email <${email}> is not in .mailmap"
-            missing=1
-          fi
-        done
-
-        if [ "$missing" -eq 1 ]; then
-          echo "All contributors must be listed in .mailmap. See README.md"
-          exit 1
-        fi
+      - mise run signoff
 
   web:lint:
     desc: Lint and check the frontend
@@ -562,7 +527,7 @@ tasks:
     desc: Run static checks
     deps: [go:lint, web:lint]
     cmds:
-      - task: signof
+      - task: signoff
       - task: go:lint
       - task: web:lint
       - reuse lint

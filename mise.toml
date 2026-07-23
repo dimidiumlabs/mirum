@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+min_version = "2026.7.5"
+
+[settings]
+experimental = true
+
+[task_config]
+dir = "{{cwd}}"
+includes = [
+  "git::https://github.com/dimidiumlabs/infra.git//tasks?ref=22410a5dae5ff53b54d1666db5c6009229fbaaa5",
+]
