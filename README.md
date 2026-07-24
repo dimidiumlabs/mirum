@@ -9,6 +9,18 @@
 An experimental portable CI platform with VM-first isolation,
 programmable pipelines, local execution parity and Starlark configs.
 
+## Development
+
+Install the language toolchains, build utilities, and required system packages
+declared by the repository:
+
+```console
+mise bootstrap
+mise exec -- task --list
+```
+
+`task` remains the runner until the task definitions are migrated to mise.
+
 ## [Why](https://xkcd.com/927/)
 
 The goal of this project is to build a CI system that's both convenient for tiny

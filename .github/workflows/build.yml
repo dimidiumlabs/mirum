@@ -25,21 +25,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
         with:
-          go-version-file: go.mod
+          version: 2026.7.5
+          experimental: true
+          install: false
 
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          mirror: https://pkg.earth/zig # maintained by mirum author
-          version: 0.16.0 # keep in sync with build.zig.zon
-
-      - name: Install tools
-        run: |
-          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
-          sudo apt update && sudo apt install nfpm apt-utils rclone createrepo-c
-          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
-          curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.67.0/buf-$(uname -s)-$(uname -m)" -o /usr/local/bin/buf && chmod +x /usr/local/bin/buf
+      - name: Install dependencies
+        run: mise bootstrap --locked --yes --update
 
       - name: Build and package
         run: task package GIT_REF=${{ github.ref }} GPG_KEY_ID=${{ vars.GPG_KEY_ID }}

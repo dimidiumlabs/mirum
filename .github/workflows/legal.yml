@@ -26,6 +26,7 @@ jobs:
         with:
           version: 2026.7.5
           experimental: true
+          install: false
 
       - name: Check contribution sign-off
         run: mise run signoff

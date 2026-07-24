@@ -6,6 +6,30 @@ min_version = "2026.7.5"
 [settings]
 experimental = true
 
+[tools]
+buf = "1.67.0"
+gh = "2.96.0"
+go = "1.26.5"
+nfpm = "2.47.0"
+node = "24.18.0"
+rclone = "1.74.4"
+task = "3.52.0"   # Removed after Taskfile.yml is migrated to mise tasks.
+zig = "0.16.0"
+
+[bootstrap.packages]
+# APT
+"apt:apt-utils" = "latest"
+"apt:createrepo-c" = "latest"
+"apt:gnupg" = "latest"
+"apt:openssl" = "latest"
+"apt:zip" = "latest"
+
+# DNF
+"dnf:createrepo_c" = "latest"
+"dnf:gnupg2" = "latest"
+"dnf:openssl" = "latest"
+"dnf:zip" = "latest"
+
 [task_config]
 dir = "{{cwd}}"
 includes = [

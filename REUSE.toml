@@ -11,6 +11,7 @@ path = [
   "cmd/mirum-server/web/*.json",
   "go.mod",
   "go.sum",
+  "mise.lock",
   "packaging/dl/*",
   "packaging/logo.svg",
   "buf.*",
