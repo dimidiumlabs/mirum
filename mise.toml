@@ -9,5 +9,5 @@ experimental = true
 [task_config]
 dir = "{{cwd}}"
 includes = [
-  "git::https://github.com/dimidiumlabs/infra.git//tasks?ref=69a62b0217e237ffcd461192e4d128bd10f4d45c",
+  "git::https://github.com/dimidiumlabs/infra.git//tasks?ref=f2506479af3e8eac34b675582878ac783a5effda",
 ]

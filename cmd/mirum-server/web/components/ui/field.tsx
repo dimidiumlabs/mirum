@@ -1,4 +1,4 @@
-// Copyright (c) 2023 shadcn
+// SPDX-FileCopyrightText: 2023 shadcn
 // SPDX-License-Identifier: MIT
 
 import { useMemo } from "react";

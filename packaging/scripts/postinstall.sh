@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (c) 2026 Nikolay Govorov
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 set -e
