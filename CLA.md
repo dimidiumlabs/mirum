@@ -1,43 +1,45 @@
-# Mirum Grant and Contributor License Agreement
+# Mirum Individual Contributor License Agreement
 
-> This agreement is based on the Harmony Combined Contributor Agreement
-> Version 1.0 licensed under a [Creative Commons Attribution 3.0 Unported License](http://creativecommons.org/licenses/by/3.0/).
+Version 1.0
 
-Thank you for your interest in contributing to Mirum ("We" or "Us"). In order
-to clarify the intellectual property license granted with Contributions from any
-person or entity, We must have a Contributor License Agreement ("CLA") on file
-that has been signed, accepted or otherwise agreed to by each contributor,
-indicating agreement to the license terms below. This license is for your
-protection as a contributor as well as the protection of the Us and our users;
-it does not change your rights to use your own Contributions for any other
-purpose.
+> This agreement is based on the Harmony Individual Contributor License
+> Agreement Version 1.0 licensed under a
+> [Creative Commons Attribution 3.0 Unported License](https://creativecommons.org/licenses/by/3.0/).
+
+Thank you for your interest in contributing to Mirum (the "Project"). In this
+Agreement, "We" and "Us" mean Nikolay Govorov.
+
+This contributor agreement ("Agreement") documents the rights granted by
+contributors to Us. To make this document effective, You must personally add
+the following trailers to every commit You Submit:
+
+```text
+CLA-Version: 1.0
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+The name and email address in `Signed-off-by` must identify You and match the
+commit author. By Submitting a commit containing these trailers, You
+electronically sign and accept this Agreement. No other person or automated
+system may add the `Signed-off-by` trailer on Your behalf. This is a legally
+binding document, so please read it carefully before agreeing to it.
 
 ## 1. Definitions
 
-"You" (Individual) means the individual who Submits a Contribution to Us.
-
-"You" (Entity) means any Legal Entity on behalf of whom a Contribution has been
-received by Us. "Legal Entity" means an entity which is not a natural person.
-"Affiliates" means other Legal Entities that control, are controlled by, or
-under common control with that Legal Entity. For the purposes of this
-definition, "control" means (i) the power, direct or indirect, to cause the
-direction or management of such Legal Entity, whether by contract or otherwise,
-(ii) ownership of fifty percent (50%) or more of the outstanding shares or
-securities which vote to elect the management or other persons who direct such
-Legal Entity or (iii) beneficial ownership of such entity.
+"You" means the individual who Submits a Contribution to Us.
 
 "Contribution" means any work of authorship that is Submitted by You to Us in
-which You own or assert ownership of the Copyright.
+which You own or assert ownership of the Copyright. If You do not own the
+Copyright in the entire work of authorship, please follow the instructions in
+Section 3(d).
 
 "Copyright" means all rights protecting works of authorship owned or controlled
-by You [or Your Affiliates], including copyright, moral and neighboring rights,
-as appropriate, for the full term of their existence including any extensions by
-You.
+by You, including copyright, moral and neighboring rights, as appropriate, for
+the full term of their existence including any extensions by You.
 
 "Material" means the work of authorship which is made available by Us to third
-parties. When this Agreement covers more than one software project, the Material
-means the work of authorship to which the Contribution was Submitted. After You
-Submit the Contribution, it may be included in the Material.
+parties as part of the Project. After You Submit the Contribution, it may be
+included in the Material.
 
 "Submit" means any form of electronic, verbal, or written communication sent to
 Us or our representatives, including but not limited to electronic mailing
@@ -69,40 +71,10 @@ modify, display, perform and distribute the Contribution as part of the
 Material; provided that this license is conditioned upon compliance with Section
 2.3.
 
-### 2.1 Copyright Assignment
-
-(a) At the time the Contribution is Submitted, You assign to Us all right,
-title, and interest worldwide in all Copyright covering the Contribution;
-provided that this transfer is conditioned upon compliance with Section 2.3.
-
-(b) To the extent that any of the rights in Section 2.1(a) cannot be assigned by
-You to Us, You grant to Us a perpetual, worldwide, exclusive, royalty-free,
-transferable, irrevocable license under such non-assigned rights, with rights to
-sublicense through multiple tiers of sublicensees, to practice such non-assigned
-rights, including, but not limited to, the right to reproduce, modify, display,
-perform and distribute the Contribution; provided that this license is
-conditioned upon compliance with Section 2.3.
-
-(c) To the extent that any of the rights in Section 2.1(a) can neither be
-assigned nor licensed by You to Us, You irrevocably waive and agree never to
-assert such rights against Us, any of our successors in interest, or any of our
-licensees, either direct or indirect; provided that this agreement not to assert
-is conditioned upon compliance with Section 2.3.
-
-(d) Upon such transfer of rights to Us, to the maximum extent possible, We
-immediately grant to You a perpetual, worldwide, non-exclusive, royalty-free,
-transferable, irrevocable license under such rights covering the Contribution,
-with rights to sublicense through multiple tiers of sublicensees, to reproduce,
-modify, display, perform, and distribute the Contribution. The intention of the
-parties is that this license will be as broad as possible and to provide You
-with rights as similar as possible to the owner of the rights that You
-transferred. This license back is limited to the Contribution and does not
-provide any rights to the Material.
-
 ### 2.2 Patent License
 
 For patent claims including, without limitation, method, process, and apparatus
-claims which You [or Your Affiliates] own, control or have the right to grant,
+claims which You own, control or have the right to grant,
 now or in the future, You grant to Us a perpetual, worldwide, non-exclusive,
 transferable, royalty-free, irrevocable patent license, with the right to
 sublicense these rights to multiple tiers of sublicensees, to make, have made,
@@ -134,7 +106,7 @@ the Material and may decide to include any Contribution We consider appropriate.
 
 ### 2.6 Reservation of Rights
 
-Any rights not expressly [assigned or] licensed under this section are expressly
+Any rights not expressly licensed under this section are expressly
 reserved by You.
 
 ## 3. Agreement
@@ -143,31 +115,32 @@ You confirm that:
 
 (a) You have the legal authority to enter into this Agreement.
 
-(b) You [or Your Affiliates] own the Copyright and patent claims covering the
+(b) You own the Copyright and patent claims covering the
 Contribution which are required to grant the rights under Section 2.
 
-(c) (Individual) The grant of rights under Section 2 does not violate any grant
+(c) The grant of rights under Section 2 does not violate any grant
 of rights which You have made to third parties, including Your employer. If You
 are an employee, You have had Your employer approve this Agreement or sign the
 Entity version of this document. If You are less than eighteen years old, please
 have Your parents or guardian sign the Agreement.
 
-(c) (Entity) The grant of rights under Section 2 does not violate any grant of
-rights which You or Your Affiliates have made to third parties.
+(d) If You do not own the Copyright in the entire work of authorship Submitted,
+You have clearly identified the third-party work, its source, and its license in
+the Submission.
 
 ## 4. Disclaimer
 
 EXCEPT FOR THE EXPRESS WARRANTIES IN SECTION 3, THE CONTRIBUTION IS PROVIDED "AS
 IS". MORE PARTICULARLY, ALL EXPRESS OR IMPLIED WARRANTIES INCLUDING, WITHOUT
 LIMITATION, ANY IMPLIED WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
-PURPOSE AND NON-INFRINGEMENT ARE EXPRESSLY DISCLAIMED BY YOU TO US [AND BY US TO
-YOU]. TO THE EXTENT THAT ANY SUCH WARRANTIES CANNOT BE DISCLAIMED, SUCH WARRANTY
+PURPOSE AND NON-INFRINGEMENT ARE EXPRESSLY DISCLAIMED BY YOU TO US.
+TO THE EXTENT THAT ANY SUCH WARRANTIES CANNOT BE DISCLAIMED, SUCH WARRANTY
 IS LIMITED IN DURATION TO THE MINIMUM PERIOD PERMITTED BY LAW.
 
 ## 5. Consequential Damage Waiver
 
-TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT WILL YOU [OR US]
-BE LIABLE FOR ANY LOSS OF PROFITS, LOSS OF ANTICIPATED SAVINGS, LOSS OF DATA,
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT WILL YOU BE
+LIABLE FOR ANY LOSS OF PROFITS, LOSS OF ANTICIPATED SAVINGS, LOSS OF DATA,
 INDIRECT, SPECIAL, INCIDENTAL, CONSEQUENTIAL AND EXEMPLARY DAMAGES ARISING OUT
 OF THIS AGREEMENT REGARDLESS OF THE LEGAL OR EQUITABLE THEORY (CONTRACT, TORT OR
 OTHERWISE) UPON WHICH THE CLAIM IS BASED.

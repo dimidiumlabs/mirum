@@ -204,7 +204,8 @@ please add yourself to the `.mailmap`.
 ### Contributor License Agreement
 
 To include your code, we ask that you read and agree to the [CLA](./CLA.md).
-To sign, add a `Signed-off-by` trailer to every commit (`git commit -s`).
+To sign, add a `CLA-Version: 1.0` and a `Signed-off-by` trailer to every commit
+(`git commit -s --trailer "CLA-Version: 1.0"`).
 Each commit in a pull request must carry a valid `Signed-off-by`
 line matching the commit author. Please use your real name or your
 public nickname. We cannot include code from anonymous contributors.
