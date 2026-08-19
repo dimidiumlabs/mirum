@@ -9,8 +9,7 @@ experimental = true
 [tools]
 buf = "1.67.0"
 gh = "2.96.0"
-go = "1.26.5"
-nfpm = "2.47.0"
+go = "1.26.6"
 node = "24.18.0"
 rclone = "1.74.4"
 task = "3.52.0"   # Removed after Taskfile.yml is migrated to mise tasks.
@@ -33,5 +32,5 @@ zig = "0.16.0"
 [task_config]
 dir = "{{cwd}}"
 includes = [
-  "git::https://github.com/dimidiumlabs/infra.git//tasks?ref=1934f5fb264ab046031d5d1b61227de2e1f8dde9",
+  "git::https://github.com/dimidiumlabs/infra.git//tasks?ref=9e7330a3e5bde39a87e0ac1b76c9e85db7a6d64a",
 ]

@@ -201,11 +201,13 @@ tasks:
           done
           cp -r "{{.BUILD_DIR}}/agent" "$staging/agent"
 
-          if [ "$os" = "windows" ]; then
-            (cd "$staging" && zip -qr "$OLDPWD/{{.DIST_DIR}}/mirum-${target}.zip" .)
-          else
-            tar -czf "{{.DIST_DIR}}/mirum-${target}.tar.gz" -C "$staging" .
-          fi
+          format=tar.gz
+          [ "$os" = "windows" ] && format=zip
+          mise run package -- \
+            --output "{{.DIST_DIR}}" \
+            --archive-root "$staging" \
+            --archive-name "mirum-${target}" \
+            "$format"
           rm -rf "$staging"
       - cd {{.DIST_DIR}} && sha256sum *.tar.gz *.zip > SHA256SUMS
 
@@ -231,27 +233,6 @@ tasks:
       VERSION: "{{.VERSION}}"
     cmds:
       - |
-        cleanup() { rm -rf "$GNUPGHOME" /tmp/mirum-signing.asc /tmp/mirum-apk.rsa 2>/dev/null; }
-        trap cleanup EXIT
-
-        if [ -n "${GPG_PRIVATE_KEY:-}" ]; then
-          export GNUPGHOME=$(mktemp -d)
-          chmod 700 "$GNUPGHOME"
-          printf '%s' "$GPG_PRIVATE_KEY" > /tmp/mirum-signing.asc
-          chmod 600 /tmp/mirum-signing.asc
-          gpg --batch --yes --passphrase "$GPG_PASSPHRASE" --import /tmp/mirum-signing.asc
-          export GPG_KEY_ID="{{.GPG_KEY_ID}}"
-          export SIGNING_PRIVATE_KEY="/tmp/mirum-signing.asc"
-          export NFPM_PASSPHRASE="$GPG_PASSPHRASE"
-        fi
-
-        if [ -n "${APK_PRIVATE_KEY:-}" ]; then
-          printf '%s' "$APK_PRIVATE_KEY" > /tmp/mirum-apk.rsa
-          chmod 600 /tmp/mirum-apk.rsa
-          export APK_SIGNING_KEY="/tmp/mirum-apk.rsa"
-          openssl rsa -in /tmp/mirum-apk.rsa -pubout -out "{{.DIST_DIR}}/mirum.rsa.pub"
-        fi
-
         for arch in {{.LINUX_PKG_TARGETS}}; do
           mkdir -p {{.BUILD_DIR}}/tmp
           for cmd in cmd/*/; do
@@ -259,12 +240,18 @@ tasks:
             [ "$bin" = "mirum-agent" ] && continue
             cp "{{.BUILD_DIR}}/${bin}-linux-${arch}" "{{.BUILD_DIR}}/tmp/${bin}"
           done
-          ARCH=$arch nfpm package --packager deb --target {{.DIST_DIR}}/
-          ARCH=$arch nfpm package --packager rpm --target {{.DIST_DIR}}/
+
+          formats="deb rpm"
           # Alpine does not build for loong64
           if [ "$arch" != "loong64" ]; then
-            ARCH=$arch nfpm package --packager apk --target {{.DIST_DIR}}/
+            formats="$formats apk"
           fi
+          GPG_KEY_ID="{{.GPG_KEY_ID}}" mise run package -- \
+            --version "{{.VERSION}}" \
+            --arch "$arch" \
+            --output "{{.DIST_DIR}}" \
+            --apk-public-key mirum.rsa.pub \
+            $formats
           rm -rf {{.BUILD_DIR}}/tmp
         done
 
