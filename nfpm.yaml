@@ -127,6 +127,6 @@ rpm:
 apk:
   signature:
     key_file: ${APK_SIGNING_KEY}
-    # nfpm appends ".rsa.pub" to this value when embedding the signature;
-    # clients must install the public key as /etc/apk/keys/mirum.rsa.pub.
-    key_name: mirum
+    # nFPM appends ".rsa.pub"; the versioned basename lets clients retain
+    # historical package keys during rotation.
+    key_name: packages.${PACKAGE_KEY_VERSION}

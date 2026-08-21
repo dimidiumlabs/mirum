@@ -18,6 +18,11 @@ jobs:
   build:
     name: Build and publish Nightly
     runs-on: ubuntu-latest
+    concurrency:
+      group: >-
+        package-publish-mirum-${{ github.ref == 'refs/heads/main' && 'nightly'
+        || startsWith(github.ref, 'refs/tags/v') && 'stable' || github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -40,6 +45,7 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           APK_PRIVATE_KEY: ${{ secrets.APK_PRIVATE_KEY }}
+          PACKAGE_KEY_VERSION: ${{ vars.PACKAGE_KEY_VERSION }}
 
       - name: Lint
         run: task lint
@@ -54,17 +60,20 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           . build/dist/build.env
           task publish:release CHANNEL=$CHANNEL VERSION=$VERSION
-          task publish:repos \
-            CHANNEL=$CHANNEL \
-            S3_BUCKET=${{ vars.S3_BUCKET }} \
-            S3_PUBLIC_URL=${{ vars.S3_PUBLIC_URL }} \
-            S3_PROVIDER="${{ vars.S3_PROVIDER || 'Other' }}" \
-            S3_REGION=${{ vars.S3_REGION }} \
-            S3_ENDPOINT=${{ vars.S3_ENDPOINT }} \
-            GPG_KEY_ID=${{ vars.GPG_KEY_ID }}
+          mise run publish -- \
+            --service mirum \
+            --channel "$CHANNEL" \
+            --input build/dist \
+            deb rpm apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_KEY_ID: ${{ vars.GPG_KEY_ID }}
+          APK_PRIVATE_KEY: ${{ secrets.APK_PRIVATE_KEY }}
+          PACKAGE_KEY_VERSION: ${{ vars.PACKAGE_KEY_VERSION }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_PUBLIC_URL: ${{ vars.S3_PUBLIC_URL }}
           S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}

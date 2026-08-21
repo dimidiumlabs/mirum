@@ -139,8 +139,8 @@ Please note that the project is in its infancy and is **not** intended for produ
 ```bash
 sudo apt install curl gnupg
 
-curl -fsSL https://dl.mirum.dev/public.gpg | sudo gpg --dearmor -o /usr/share/keyrings/mirum.gpg
-echo "deb [signed-by=/usr/share/keyrings/mirum.gpg] https://dl.mirum.dev/apt/ nightly main" | sudo tee /etc/apt/sources.list.d/mirum.list
+curl -fsSL https://pkg.dimidiumlabs.io/packages.gpg | sudo gpg --dearmor -o /usr/share/keyrings/dimidiumlabs.gpg
+echo "deb [signed-by=/usr/share/keyrings/dimidiumlabs.gpg] https://pkg.dimidiumlabs.io/mirum/apt/ nightly main" | sudo tee /etc/apt/sources.list.d/mirum.list
 sudo apt update && sudo apt install mirum
 
 # Start the server
@@ -154,10 +154,10 @@ sudo systemctl enable --now mirum-worker@default
 
 ```bash
 # DNF5 (Fedora 41+, RHEL 10+)
-sudo dnf config-manager addrepo --from-repofile=https://dl.mirum.dev/rpm/nightly/mirum-nightly.repo
+sudo dnf config-manager addrepo --from-repofile=https://pkg.dimidiumlabs.io/mirum/rpm/nightly/mirum-nightly.repo
 
 # DNF4 (Fedora 40 and older, RHEL 8/9)
-sudo curl -o /etc/yum.repos.d/mirum-nightly.repo https://dl.mirum.dev/rpm/nightly/mirum-nightly.repo
+sudo curl -o /etc/yum.repos.d/mirum-nightly.repo https://pkg.dimidiumlabs.io/mirum/rpm/nightly/mirum-nightly.repo
 
 sudo dnf install mirum
 
@@ -171,8 +171,8 @@ sudo systemctl enable --now mirum-worker@default
 **openSUSE:**
 
 ```bash
-sudo rpm --import https://dl.mirum.dev/public.gpg
-sudo zypper addrepo https://dl.mirum.dev/rpm/nightly/ mirum-nightly
+sudo rpm --import https://pkg.dimidiumlabs.io/packages.gpg
+sudo zypper addrepo https://pkg.dimidiumlabs.io/mirum/rpm/nightly/ mirum-nightly
 sudo zypper refresh
 sudo zypper install mirum
 
@@ -185,15 +185,11 @@ sudo systemctl enable --now mirum-worker@default
 
 **Alpine:**
 
-No repository yet — grab the signing key and the signed `.apk` from the nightly
-release:
-
 ```sh
-sudo wget -O /etc/apk/keys/mirum.rsa.pub https://dl.mirum.dev/mirum.rsa.pub
-
-# Download the .apk for your arch from
-# https://github.com/dimidiumlabs/mirum/releases/tag/nightly
-sudo apk add ./mirum_<version>_<arch>.apk
+sudo wget -O /etc/apk/keys/packages.0001.rsa.pub https://pkg.dimidiumlabs.io/keys/packages.0001.rsa.pub
+echo "https://pkg.dimidiumlabs.io/mirum/apk/nightly" | sudo tee -a /etc/apk/repositories
+sudo apk update
+sudo apk add mirum
 
 # Start the server
 sudo rc-update add mirum-server default

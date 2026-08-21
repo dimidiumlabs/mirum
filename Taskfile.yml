@@ -250,103 +250,11 @@ tasks:
             --version "{{.VERSION}}" \
             --arch "$arch" \
             --output "{{.DIST_DIR}}" \
-            --apk-public-key mirum.rsa.pub \
             $formats
           rm -rf {{.BUILD_DIR}}/tmp
         done
 
         printf 'VERSION={{.VERSION}}\nCHANNEL={{.CHANNEL}}\n' > {{.DIST_DIR}}/build.env
-
-  publish:repos:
-    desc: Publish packages to APT and RPM repositories on S3
-    requires:
-      vars:
-        [
-          CHANNEL,
-          S3_BUCKET,
-          S3_PUBLIC_URL,
-          S3_PROVIDER,
-          S3_REGION,
-          S3_ENDPOINT,
-          GPG_KEY_ID,
-        ]
-    cmds:
-      - |
-        set -e
-        export GNUPGHOME=$(mktemp -d)
-        RCLONE_CONF=$(mktemp)
-        chmod 700 "$GNUPGHOME"
-        cleanup() { rm -rf "$GNUPGHOME" "$RCLONE_CONF"; }
-        trap cleanup EXIT
-
-        cat > "$RCLONE_CONF" << EOF
-        [s3]
-        type = s3
-        provider = {{.S3_PROVIDER}}
-        access_key_id = ${S3_ACCESS_KEY_ID}
-        secret_access_key = ${S3_SECRET_ACCESS_KEY}
-        region = {{.S3_REGION}}
-        endpoint = {{.S3_ENDPOINT}}
-        EOF
-        export RCLONE_CONFIG="$RCLONE_CONF"
-
-        printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --import
-        echo "allow-loopback-pinentry" >> "$GNUPGHOME/gpg-agent.conf"
-        gpgconf --kill gpg-agent
-
-        # Upload static files
-        gpg --export --armor "{{.GPG_KEY_ID}}" > "$GNUPGHOME/public.gpg"
-        rclone copyto "$GNUPGHOME/public.gpg" "s3:{{.S3_BUCKET}}/public.gpg"
-        rclone copy packaging/dl/ "s3:{{.S3_BUCKET}}/"
-
-        if [ -f "{{.DIST_DIR}}/mirum.rsa.pub" ]; then
-          rclone copyto "{{.DIST_DIR}}/mirum.rsa.pub" "s3:{{.S3_BUCKET}}/mirum.rsa.pub"
-        fi
-
-        # APT repository
-        CHANNEL={{.CHANNEL}}
-        mkdir -p /tmp/apt-cache apt-repo
-        rclone copy "s3:{{.S3_BUCKET}}/apt/" apt-repo/
-
-        for ch in stable nightly; do
-          mkdir -p apt-repo/pool/$ch
-          for arch in {{.LINUX_PKG_TARGETS}}; do
-            mkdir -p apt-repo/dists/$ch/main/binary-$arch
-          done
-        done
-        cp {{.DIST_DIR}}/*.deb apt-repo/pool/$CHANNEL/
-
-        cd apt-repo
-        apt-ftparchive generate "$(pwd)/../packaging/apt-ftparchive.conf"
-        apt-ftparchive \
-          -o APT::FTPArchive::Release::Codename=$CHANNEL \
-          -o APT::FTPArchive::Release::Components=main \
-          -o APT::FTPArchive::Release::Architectures="{{.LINUX_PKG_TARGETS}}" \
-          release dists/$CHANNEL/ > dists/$CHANNEL/Release
-        gpg --default-key="{{.GPG_KEY_ID}}" --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" -abs -o dists/$CHANNEL/Release.gpg dists/$CHANNEL/Release
-        gpg --default-key="{{.GPG_KEY_ID}}" --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --clearsign -o dists/$CHANNEL/InRelease dists/$CHANNEL/Release
-        cd ..
-        rclone copy apt-repo/ "s3:{{.S3_BUCKET}}/apt/" --progress
-
-        # RPM repository
-        mkdir -p rpm-repo
-        rclone copy "s3:{{.S3_BUCKET}}/rpm/$CHANNEL/" rpm-repo/
-
-        cp {{.DIST_DIR}}/*.rpm rpm-repo/
-
-        createrepo_c --update rpm-repo/
-        gpg --default-key="{{.GPG_KEY_ID}}" --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --detach-sign --armor rpm-repo/repodata/repomd.xml
-
-        cat > rpm-repo/mirum-${CHANNEL}.repo << REPOEOF
-        [mirum-${CHANNEL}]
-        name=Mirum ${CHANNEL}
-        gpgkey={{.S3_PUBLIC_URL}}/public.gpg
-        baseurl={{.S3_PUBLIC_URL}}/rpm/${CHANNEL}/
-        enabled=1
-        gpgcheck=1
-        REPOEOF
-
-        rclone copy rpm-repo/ "s3:{{.S3_BUCKET}}/rpm/$CHANNEL/" --progress
 
   publish:release:
     desc: Create or update a GitHub Release
@@ -367,11 +275,11 @@ tasks:
           done
         fi
 
-        gh release create "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.apk {{.DIST_DIR}}/*.rsa.pub {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS \
+        gh release create "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.apk {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS \
           --title "$NAME" \
           $( [ "{{.CHANNEL}}" = "nightly" ] && echo "--prerelease" ) \
           --notes "**Version**: {{.VERSION}}" \
-          || gh release upload "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.apk {{.DIST_DIR}}/*.rsa.pub {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS --clobber
+          || gh release upload "$TAG" {{.DIST_DIR}}/*.deb {{.DIST_DIR}}/*.rpm {{.DIST_DIR}}/*.apk {{.DIST_DIR}}/*.tar.gz {{.DIST_DIR}}/*.zip {{.DIST_DIR}}/SHA256SUMS --clobber
 
   # Local dev env
   devenv:config:
