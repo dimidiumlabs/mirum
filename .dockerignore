@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+.git
+.github
+.task
+build
+cmd/mirum-agent/.zig-cache
+cmd/mirum-agent/zig-out
+cmd/mirum-agent/zig-pkg
+cmd/mirum-server/apipb
+cmd/mirum-server/static
+cmd/mirum-server/web/gen
+cmd/mirum-server/web/node_modules
+internal/protocol/wirepb

@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+server:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/dimidiumlabs/mirum-server
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  # Must contain config.yaml and every file referenced by that config, normally
+  # grpc.crt and grpc.key. Keep database_uri, pepper, token, and webhook_secret
+  # in this Secret rather than Helm values.
+  existingSecret: mirum-server
+  webPort: 3000
+  grpcPort: 2000
+  route:
+    enabled: false
+    hostnames: []
+    parentRefs: []
+  resources: {}
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+worker:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: ghcr.io/dimidiumlabs/mirum-worker
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  # Must contain config.yaml, the Ed25519 key referenced by key_file, and an
+  # optional CA file referenced by tls_ca.
+  existingSecret: mirum-worker
+  resources: {}
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+terminationGracePeriodSeconds: 40

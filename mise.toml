@@ -34,5 +34,5 @@ zig = "0.16.0"
 [task_config]
 dir = "{{cwd}}"
 includes = [
-  "git::https://github.com/dimidiumlabs/infra.git//tasks?ref=4a4589fdb968686a7c91b380ff369aba23bd8662",
+  "git::https://github.com/dimidiumlabs/infra.git//tasks?ref=8bc35fe8be889c50db2d1fb4425cc1b4097dc6b8",
 ]

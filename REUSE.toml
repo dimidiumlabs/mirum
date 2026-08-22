@@ -14,6 +14,7 @@ path = [
   "mise.lock",
   "packaging/dl/*",
   "packaging/logo.svg",
+  "charts/mirum/templates/*",
   "buf.*",
 ]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov"
@@ -29,6 +30,7 @@ SPDX-License-Identifier = "CC-BY-3.0"
 [[annotations]]
 path = [
   "README.md",
+  "charts/mirum/README.md",
   "docs/**.md",
 ]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov"

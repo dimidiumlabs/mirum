@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+{{- if .Values.server.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mirum.fullname" . }}
+  labels:
+    {{- include "mirum.componentLabels" (dict "root" . "component" "server") | nindent 4 }}
+spec:
+  selector:
+    {{- include "mirum.selectorLabels" (dict "root" . "component" "server") | nindent 4 }}
+  ports:
+    - name: web
+      port: {{ .Values.server.webPort }}
+      targetPort: web
+    - name: grpc
+      port: {{ .Values.server.grpcPort }}
+      targetPort: grpc
+{{- end }}
+
+# vim: set filetype=helm:

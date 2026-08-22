@@ -3,6 +3,7 @@
 
 /dev
 /build
+/.container
 /.task
 mise.local.toml
 mise.*.local.toml
