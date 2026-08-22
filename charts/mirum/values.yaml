@@ -13,15 +13,22 @@ server:
     tag: ""
     digest: ""
     pullPolicy: IfNotPresent
-  # Must contain config.yaml and every file referenced by that config, normally
-  # grpc.crt and grpc.key. Keep database_uri, pepper, token, and webhook_secret
-  # in this Secret rather than Helm values.
+  # Must contain config.yaml and any private files other than the gRPC
+  # certificate. Keep database_uri, pepper, token, and webhook_secret in this
+  # Secret rather than Helm values.
   existingSecret: mirum-server
+  grpcTls:
+    # Optional cert-manager-style Secret containing tls.crt and tls.key. The
+    # files are mounted at /etc/mirum/grpc-tls/ for config.yaml to reference.
+    existingSecret: ""
   webPort: 3000
   grpcPort: 2000
   route:
     enabled: false
     hostnames: []
+    parentRefs: []
+  grpcRoute:
+    enabled: false
     parentRefs: []
   resources: {}
   extraEnv: []

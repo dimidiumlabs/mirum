@@ -76,6 +76,11 @@ spec:
             - name: config
               mountPath: /etc/mirum/secret
               readOnly: true
+            {{- with .Values.server.grpcTls.existingSecret }}
+            - name: grpc-tls
+              mountPath: /etc/mirum/grpc-tls
+              readOnly: true
+            {{- end }}
             - name: run
               mountPath: /run/mirum-server
       volumes:
@@ -83,6 +88,12 @@ spec:
           secret:
             secretName: {{ .Values.server.existingSecret }}
             defaultMode: 0440
+        {{- with .Values.server.grpcTls.existingSecret }}
+        - name: grpc-tls
+          secret:
+            secretName: {{ . }}
+            defaultMode: 0440
+        {{- end }}
         - name: run
           emptyDir: {}
       {{- with .Values.server.nodeSelector }}
