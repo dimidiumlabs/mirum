@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+replicaCount: 1
+
+image:
+    repository: ghcr.io/dimidiumlabs/mirum
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# The chart never renders database credentials into a Kubernetes manifest.
+# This Secret must contain the key selected by config.key.
+config:
+    existingSecret: mirum
+    key: config.toml
+
+service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+
+# Gateway API publication. TLS and certificates belong to the selected Gateway.
+route:
+    enabled: false
+    hostnames: []
+    parentRefs: []
+
+# Set this when server.hostnames in config.toml is non-empty so the Kubernetes
+# readiness probe supplies an accepted Host authority.
+probes:
+    host: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10000
+    runAsGroup: 10000
+    fsGroup: 10000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+        type: RuntimeDefault
+
+securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+        drop: [ALL]
+
+resources:
+    requests:
+        cpu: 50m
+        memory: 64Mi
+    limits:
+        memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+terminationGracePeriodSeconds: 30

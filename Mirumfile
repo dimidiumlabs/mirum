@@ -1,0 +1,100 @@
+#!/usr/bin/sh
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+set -eu
+
+if ! command -v mise >/dev/null 2>&1; then
+    mise_version=2026.7.5
+    case $(uname -m) in
+        x86_64)
+            mise_platform=linux-x64
+            mise_sha256=be92da3afb180dc71b3ce6fcaaaf2f393812c9c50e9a64c9cb6706cf28edb486
+            ;;
+        aarch64)
+            mise_platform=linux-arm64
+            mise_sha256=9020f7453931a6873d60cf204d5935ebd08633b25f675b0820cd06862b4b6450
+            ;;
+        *)
+            echo "unsupported architecture for mise: $(uname -m)" >&2
+            exit 1
+            ;;
+    esac
+
+    mise_root="/tmp/mise-$mise_version-$mise_platform"
+    mise_archive="$mise_root.tar.gz"
+
+    rm -rf "$mise_root"
+    mkdir -p "$mise_root"
+    curl --proto '=https' --tlsv1.2 -fsSL \
+        "https://github.com/jdx/mise/releases/download/v$mise_version/mise-v$mise_version-$mise_platform.tar.gz" \
+        -o "$mise_archive"
+
+    printf '%s  %s\n' "$mise_sha256" "$mise_archive" | sha256sum --check
+    tar -xzf "$mise_archive" -C "$mise_root" --strip-components=1 mise/bin/mise
+    rm -f "$mise_archive"
+
+    PATH="$mise_root/bin:$PATH"
+    export PATH
+fi
+
+MISE_IGNORED_CONFIG_PATHS=${MISE_IGNORED_CONFIG_PATHS:-${XDG_CONFIG_HOME:-$HOME/.config}/mise/config.toml}
+export MISE_IGNORED_CONFIG_PATHS
+if [ -z "${MISE_GITHUB_TOKEN:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
+    MISE_GITHUB_TOKEN=$GH_TOKEN
+    export MISE_GITHUB_TOKEN
+fi
+
+if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+    if [ -n "${GITHUB_REF:-}" ]; then
+        git fetch --unshallow --tags origin "$GITHUB_REF"
+    else
+        git fetch --unshallow --tags
+    fi
+fi
+
+mise bootstrap --locked --yes --update
+mise exec -- tests/chart.sh
+
+[ "${GITHUB_EVENT_NAME:-}" = push ] || exit 0
+
+base_version=$(mise exec -- cargo metadata --no-deps --format-version 1 |
+    mise exec -- jq -r '.packages[] | select(.name == "mirum") | .version')
+[ -n "$base_version" ] || {
+    echo "cannot determine mirum version" >&2
+    exit 1
+}
+
+case ${GITHUB_REF:-} in
+    refs/tags/v*)
+        version=${GITHUB_REF#refs/tags/v}
+        if ! printf '%s\n' "$version" |
+            grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$'; then
+            echo "release tag is not supported SemVer: $version" >&2
+            exit 1
+        fi
+        [ "$version" = "$base_version" ] || {
+            echo "tag version $version does not match Cargo.toml version $base_version" >&2
+            exit 1
+        }
+        ;;
+    refs/heads/main)
+        version="$base_version-nightly.$(git log -1 --format=%ct)"
+        ;;
+    *)
+        echo "ref is not publishable: ${GITHUB_REF:-unset}" >&2
+        exit 1
+        ;;
+esac
+
+: "${GITHUB_ACTOR:?GITHUB_ACTOR is required for publishing}"
+: "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER is required for publishing}"
+repository_owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" |
+    tr '[:upper:]' '[:lower:]')
+mise exec -- gh auth token | mise exec -- helm registry login ghcr.io \
+    --username "$GITHUB_ACTOR" --password-stdin
+mise run chart -- \
+    --chart charts/mirum \
+    --version "$version" \
+    --app-version "$version" \
+    --push "oci://ghcr.io/$repository_owner/charts"

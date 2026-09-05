@@ -15,6 +15,23 @@ podman run -d --name mirum-postgres -p 5432:5432 \
 cargo run --locked -- --config config/mirum.toml
 ```
 
+## Helm
+
+The chart in [`charts/mirum`](charts/mirum) deploys Mirum with configuration
+from an existing Secret and can publish it through a Gateway API `HTTPRoute`.
+Pull requests validate the chart in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+Pushes to `main` and `v*` tags publish it to GHCR. The same operations are
+available locally through the shared platform task:
+
+```console
+mise run chart -- --chart charts/mirum --lint-only
+mise run chart -- --chart charts/mirum --version VERSION \
+  --app-version VERSION --push oci://ghcr.io/dimidiumlabs/charts
+```
+
+See the [chart documentation](charts/mirum/README.md) for installation,
+PostgreSQL configuration, and Gateway values.
+
 ## Contributing
 
 We welcome your contributions, including code, bug reports, ideas, and success

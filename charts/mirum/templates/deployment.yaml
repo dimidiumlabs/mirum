@@ -1,0 +1,106 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+{{- if or (hasKey .Values.podLabels "app.kubernetes.io/name") (hasKey .Values.podLabels "app.kubernetes.io/instance") }}
+{{- fail "podLabels must not override Mirum selector labels" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mirum.fullname" . }}
+  labels:
+    {{- include "mirum.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mirum.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "mirum.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mirum
+          image: {{ include "mirum.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/etc/mirum/config.toml"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /-/health
+              port: http
+              {{- with .Values.probes.host }}
+              httpHeaders:
+                - name: Host
+                  value: {{ . | quote }}
+              {{- end }}
+            failureThreshold: 60
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+              {{- with .Values.probes.host }}
+              httpHeaders:
+                - name: Host
+                  value: {{ . | quote }}
+              {{- end }}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /-/health
+              port: http
+              {{- with .Values.probes.host }}
+              httpHeaders:
+                - name: Host
+                  value: {{ . | quote }}
+              {{- end }}
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mirum/config.toml
+              subPath: config.toml
+              readOnly: true
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ required "config.existingSecret is required" .Values.config.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ required "config.key is required" .Values.config.key | quote }}
+                path: config.toml
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

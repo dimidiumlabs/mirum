@@ -8,7 +8,11 @@ experimental = true
 
 [tools]
 "github:EmbarkStudios/cargo-about" = "0.8.4"
+gh = "2.100.0"
+helm = "4.1.1"
+jq = "1.8.2"
 rust = { version = "1.97.1", profile = "minimal", components = ["clippy", "rustfmt"] }
+shellcheck = "0.11.0"
 
 [task_config]
 dir = "{{cwd}}"
