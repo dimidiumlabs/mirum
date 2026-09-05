@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+/dist
+/target
+mise.local.toml
+mise.*.local.toml
+
+/.container
+/.mirum-state

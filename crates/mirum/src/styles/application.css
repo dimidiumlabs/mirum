@@ -1,0 +1,41 @@
+/* SPDX-FileCopyrightText: 2026 Nikolay Govorov */
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+
+:root {
+    --mirum-accent: #6750a4;
+    --mirum-surface: #f7f5fb;
+    --mirum-text-muted: #5f5b66;
+}
+
+body {
+    margin: 0;
+    background: var(--mirum-surface);
+}
+
+.page {
+    box-sizing: border-box;
+    width: min(100%, 48rem);
+    min-height: 100vh;
+    margin: 0 auto;
+    padding: clamp(2rem, 8vw, 6rem) clamp(1.25rem, 5vw, 3rem);
+}
+
+.page header {
+    border-bottom: 0.25rem solid var(--mirum-accent);
+    margin-bottom: 3rem;
+}
+
+.page h1 {
+    margin-top: 0;
+}
+
+.eyebrow {
+    color: var(--mirum-text-muted);
+    font-family: var(--font-family-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.page footer {
+    margin-top: 4rem;
+}

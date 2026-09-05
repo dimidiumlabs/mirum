@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+publish = false
+edition = "2024"
+rust-version = "1.97"
+version = "0.1.0"
+license = "AGPL-3.0-or-later"
+authors = ["Nikolay Govorov <me@govorov.online>"]
+homepage = "https://git.dimidiumlabs.io/mirum"
+repository = "https://git.dimidiumlabs.io/mirum"
+
+[workspace.dependencies]
+axum = "0.8.4"
+bytesize = { version = "2.3", features = ["serde"] }
+humantime-serde = "1.1.1"
+hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
+ipnet = { version = "2", features = ["serde"] }
+maud = "0.27.0"
+serde = { version = "1.0.219", features = ["derive"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-native-tls", "postgres", "sqlite"] }
+tokio = { version = "1.44.2", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio-util = "0.7"
+toml = "1.1.5"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = true

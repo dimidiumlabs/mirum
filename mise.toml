@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+min_version = "2026.7.5"
+
+[settings]
+experimental = true
+
+[tools]
+"github:EmbarkStudios/cargo-about" = "0.8.4"
+rust = { version = "1.97.1", profile = "minimal", components = ["clippy", "rustfmt"] }
+
+[task_config]
+dir = "{{cwd}}"
+includes = [
+  "git::https://git.dimidiumlabs.io/platform.git//tasks?ref=d6639bb2f831afedfa0b55faf5869311b04d9d74",
+]

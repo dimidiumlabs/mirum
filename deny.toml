@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[licenses]
+allow = [
+  # Dilution licenses available without restrictions
+  "MIT",
+  "ISC",
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "MPL-2.0",
+
+  # Build-only Oxc's number formatter is dual-licensed under this alternative.
+  "BSL-1.0",
+
+  # Custom but acceptable free licenses
+  "OFL-1.1",
+  "Zlib",
+  "Unicode-3.0",
+  "bzip2-1.0.6",
+
+  # GPL versions
+  "AGPL-3.0-or-later",
+  "GPL-2.0-or-later",
+  "GPL-3.0-or-later",
+  "LGPL-2.0-or-later",
+  "LGPL-2.1-or-later",
+  "LGPL-3.0-or-later",
+]
+unused-allowed-license = "allow"
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"
+required-git-spec = "rev"
+allow-git = ["https://git.dimidiumlabs.io/platform.git"]

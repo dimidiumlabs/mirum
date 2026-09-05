@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[server]
+addr = "127.0.0.1:8080"
+hostnames = []
+
+header_read_timeout = "10s"
+request_body_idle_timeout = "60s"
+request_body_max_bytes = "1GiB"
+trusted_proxies = []
+http1_max_buffer_bytes = "32KiB"
+http2_max_concurrent_streams = 64
+http2_max_header_list_bytes = "16KiB"
+
+compression_level = 5
+compression_min_bytes = "128B"
+
+max_queued_requests = 128
+max_concurrent_requests = 64
+admission_wait = "1s"
+shutdown_timeout = "25s"
+
+[database]
+url = "postgres://mirum:mirum@127.0.0.1:5432/mirum"
+max_connections = 10
+connect_timeout_seconds = 5
