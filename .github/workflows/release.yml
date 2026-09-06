@@ -20,7 +20,18 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.7.5
+          bootstrap: true
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: all-targets
+          key: ${{ hashFiles('mise.lock') }}
+          cache-on-failure: true
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64,riscv64
       - run: ./Mirumfile
         env:
           GH_TOKEN: ${{ github.token }}
