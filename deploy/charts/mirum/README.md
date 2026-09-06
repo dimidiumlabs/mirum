@@ -31,6 +31,13 @@ Use `config.existingSecret` and `config.key` when the Secret or key has another
 name. The Secret is mounted read-only and the chart never copies its contents
 into a generated resource.
 
+## Pod integration
+
+`serviceAccountName` selects an existing ServiceAccount without enabling its
+API token mount. `extraVolumes` and `extraVolumeMounts` append arbitrary
+Kubernetes volumes and Mirum container mounts, for example for a CSI-provided
+workload identity. The chart does not create the referenced external resources.
+
 ## HTTP publication
 
 The chart uses Gateway API instead of creating an Ingress. For example:

@@ -8,6 +8,9 @@
         "imagePullSecrets",
         "nameOverride",
         "fullnameOverride",
+        "serviceAccountName",
+        "extraVolumes",
+        "extraVolumeMounts",
         "config",
         "service",
         "route",
@@ -51,6 +54,15 @@
         },
         "nameOverride": { "type": "string" },
         "fullnameOverride": { "type": "string" },
+        "serviceAccountName": { "type": "string" },
+        "extraVolumes": {
+            "type": "array",
+            "items": { "type": "object" }
+        },
+        "extraVolumeMounts": {
+            "type": "array",
+            "items": { "type": "object" }
+        },
         "config": {
             "type": "object",
             "additionalProperties": false,

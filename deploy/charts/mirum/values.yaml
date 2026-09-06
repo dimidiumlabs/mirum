@@ -13,6 +13,12 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# Optional existing ServiceAccount; the chart never creates one.
+serviceAccountName: ""
+# Appended verbatim to the Pod spec and Mirum container.
+extraVolumes: []
+extraVolumeMounts: []
+
 # The chart never renders database credentials into a Kubernetes manifest.
 # This Secret must contain the key selected by config.key.
 config:

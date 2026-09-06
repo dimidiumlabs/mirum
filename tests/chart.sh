@@ -15,8 +15,9 @@ mise run chart -- --chart "$chart" --lint-only
 rendered=$(mktemp)
 routed=$(mktemp)
 invalid=$(mktemp)
+customized=$(mktemp)
 metadata=$(mktemp -d)
-trap 'rm -f "$rendered" "$routed" "$invalid"; rm -rf "$metadata"' EXIT
+trap 'rm -f "$rendered" "$routed" "$invalid" "$customized"; rm -rf "$metadata"' EXIT
 
 helm template mirum "$chart" >"$rendered"
 grep -q '^kind: Deployment$' "$rendered"
@@ -34,6 +35,22 @@ if grep -q '^kind: Secret$' "$rendered" || grep -q '^kind: ConfigMap$' "$rendere
     echo 'chart rendered configuration or credentials' >&2
     exit 1
 fi
+
+cat >"$customized" <<'EOF'
+serviceAccountName: mirum-runtime
+extraVolumes:
+  - name: workload-identity
+    secret:
+      secretName: workload-identity
+extraVolumeMounts:
+  - name: workload-identity
+    mountPath: /var/run/workload-identity
+    readOnly: true
+EOF
+helm template mirum "$chart" --values "$customized" >"$rendered"
+grep -q 'serviceAccountName: "mirum-runtime"' "$rendered"
+grep -q 'secretName: workload-identity' "$rendered"
+grep -q 'mountPath: /var/run/workload-identity' "$rendered"
 
 helm template mirum "$chart" \
     --set route.enabled=true \

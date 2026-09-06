@@ -28,6 +28,9 @@ spec:
         {{- end }}
     spec:
       automountServiceAccountToken: false
+      {{- with .Values.serviceAccountName }}
+      serviceAccountName: {{ . | quote }}
+      {{- end }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
@@ -84,6 +87,9 @@ spec:
               mountPath: /etc/mirum/config.toml
               subPath: config.toml
               readOnly: true
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: config
           secret:
@@ -92,6 +98,9 @@ spec:
             items:
               - key: {{ required "config.key is required" .Values.config.key | quote }}
                 path: config.toml
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
