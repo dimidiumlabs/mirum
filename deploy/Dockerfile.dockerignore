@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+.git
+.github
+.container/repro-bin
+.container/rpm-config
+dist
+target

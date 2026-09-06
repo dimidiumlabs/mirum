@@ -30,6 +30,20 @@ checksum = "sha256:c7381aa0cdc41fc0ee662cec8daa260da7817ad8ddea04cd4ddad425460ad
 url = "https://github.com/EmbarkStudios/cargo-about/releases/download/0.8.4/cargo-about-0.8.4-x86_64-unknown-linux-musl.tar.gz"
 url_api = "https://api.github.com/repos/EmbarkStudios/cargo-about/releases/assets/324268787"
 
+[[tools."github:rust-cross/cargo-zigbuild"]]
+version = "0.23.4"
+backend = "github:rust-cross/cargo-zigbuild"
+
+[tools."github:rust-cross/cargo-zigbuild"."platforms.linux-arm64"]
+checksum = "sha256:25cf2cdc6cde848b33a761ff2cf46d1efe6ba7e1adfc4b6f3ee2d570cacb5419"
+url = "https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/cargo-zigbuild-aarch64-unknown-linux-gnu.tar.xz"
+url_api = "https://api.github.com/repos/rust-cross/cargo-zigbuild/releases/assets/541272860"
+
+[tools."github:rust-cross/cargo-zigbuild"."platforms.linux-x64"]
+checksum = "sha256:6b69963040818ca1ef573d8135a95aa902e17cf7f873c32c6426642dadfe7f59"
+url = "https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz"
+url_api = "https://api.github.com/repos/rust-cross/cargo-zigbuild/releases/assets/541272889"
+
 [[tools.helm]]
 version = "4.1.1"
 backend = "aqua:helm/helm"
@@ -65,6 +79,7 @@ backend = "core:rust"
 [tools.rust.options]
 components = "clippy,rustfmt"
 profile = "minimal"
+targets = "aarch64-unknown-linux-musl,riscv64gc-unknown-linux-musl,x86_64-unknown-linux-musl"
 
 [[tools.shellcheck]]
 version = "0.11.0"
@@ -79,3 +94,15 @@ url_api = "https://api.github.com/repos/koalaman/shellcheck/releases/assets/2790
 checksum = "sha256:8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
 url = "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz"
 url_api = "https://api.github.com/repos/koalaman/shellcheck/releases/assets/279056942"
+
+[[tools.zig]]
+version = "0.15.2"
+backend = "core:zig"
+
+[tools.zig."platforms.linux-arm64"]
+checksum = "sha256:958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f"
+url = "https://ziglang.org/download/0.15.2/zig-aarch64-linux-0.15.2.tar.xz"
+
+[tools.zig."platforms.linux-x64"]
+checksum = "sha256:02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239"
+url = "https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz"

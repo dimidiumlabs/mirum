@@ -3,8 +3,10 @@
 
 apiVersion: v2
 type: application
-version: 0.1.0
-appVersion: 0.1.0
+
+# Replaced by the release task when the chart is packaged.
+version: 0.0.0
+appVersion: dev
 
 name: mirum
 home: https://git.dimidiumlabs.io/mirum

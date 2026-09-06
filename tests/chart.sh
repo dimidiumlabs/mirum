@@ -4,7 +4,7 @@
 set -eu
 
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
-chart=$root/charts/mirum
+chart=$root/deploy/charts/mirum
 
 helm() {
     mise x helm@4.1.1 -- helm "$@"
@@ -15,12 +15,13 @@ mise run chart -- --chart "$chart" --lint-only
 rendered=$(mktemp)
 routed=$(mktemp)
 invalid=$(mktemp)
-trap 'rm -f "$rendered" "$routed" "$invalid"' EXIT
+metadata=$(mktemp -d)
+trap 'rm -f "$rendered" "$routed" "$invalid"; rm -rf "$metadata"' EXIT
 
 helm template mirum "$chart" >"$rendered"
 grep -q '^kind: Deployment$' "$rendered"
 grep -q '^kind: Service$' "$rendered"
-grep -q 'image: "ghcr.io/dimidiumlabs/mirum:0.1.0"' "$rendered"
+grep -q 'image: "ghcr.io/dimidiumlabs/mirum:dev"' "$rendered"
 grep -q 'secretName: "mirum"' "$rendered"
 grep -q 'mountPath: /etc/mirum/config.toml' "$rendered"
 grep -q 'path: /-/health' "$rendered"
@@ -56,3 +57,9 @@ if helm template mirum "$chart" \
     echo 'chart accepted an overridden selector label' >&2
     exit 1
 fi
+
+cp -R "$chart/." "$metadata/"
+sed -i 's/^appVersion:.*/appVersion: "1.2.3+metadata"/' "$metadata/Chart.yaml"
+helm template mirum "$metadata" >"$rendered"
+grep -q 'image: "ghcr.io/dimidiumlabs/mirum:1.2.3_metadata"' "$rendered"
+grep -q 'app.kubernetes.io/version: "1.2.3_metadata"' "$rendered"

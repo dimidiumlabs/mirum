@@ -35,8 +35,9 @@ route:
 probes:
     host: ""
 
-podAnnotations: {}
 podLabels: {}
+
+podAnnotations: {}
 
 podSecurityContext:
     runAsNonRoot: true
@@ -60,7 +61,10 @@ resources:
     limits:
         memory: 256Mi
 
-nodeSelector: {}
-tolerations: []
 affinity: {}
+
+tolerations: []
+
+nodeSelector: {}
+
 terminationGracePeriodSeconds: 30

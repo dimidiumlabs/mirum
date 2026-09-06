@@ -31,6 +31,7 @@ humantime-serde.workspace = true
 hyper-util.workspace = true
 ipnet.workspace = true
 maud.workspace = true
+openssl.workspace = true
 serde.workspace = true
 sqlx.workspace = true
 tokio.workspace = true

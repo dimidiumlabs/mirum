@@ -1,0 +1,25 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh disable=SC2034
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+description="Mirum web service"
+
+command="/usr/local/bin/mirum"
+command_args="--config /etc/mirum/config.toml"
+command_user="mirum:mirum"
+
+supervisor="supervise-daemon"
+respawn_delay=30
+output_log="/var/log/mirum/out.log"
+error_log="/var/log/mirum/err.log"
+
+depend() {
+	need net
+	after firewall postgresql
+}
+
+start_pre() {
+	checkpath -d -o mirum:mirum -m 0750 /var/log/mirum
+	checkpath -d -o mirum:mirum -m 0750 /run/mirum
+}

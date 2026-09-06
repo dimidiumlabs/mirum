@@ -78,8 +78,8 @@ mod tests {
     #[test]
     fn parses_explicit_config_path() {
         assert_eq!(
-            parse(&["--config", "config/mirum.toml"]).unwrap(),
-            Some("config/mirum.toml".into())
+            parse(&["--config", "deploy/mirum.toml"]).unwrap(),
+            Some("deploy/mirum.toml".into())
         );
         assert_eq!(parse(&["--help"]).unwrap(), None);
     }

@@ -24,7 +24,7 @@ connect_timeout_seconds = 5
 kubectl create namespace mirum
 kubectl -n mirum create secret generic mirum \
   --from-file=config.toml=./config.toml
-helm upgrade --install mirum ./charts/mirum --namespace mirum
+helm upgrade --install mirum ./deploy/charts/mirum --namespace mirum
 ```
 
 Use `config.existingSecret` and `config.key` when the Secret or key has another
@@ -65,8 +65,9 @@ helm upgrade --install mirum \
   --namespace mirum --create-namespace
 ```
 
-The workflow in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
-validates pull requests and publishes pushes to `main` and `v*` tags. After
+The [CI workflow](../../../.github/workflows/ci.yml) validates pull requests,
+and the [release workflow](../../../.github/workflows/release.yml) publishes
+pushes to `main` and `v*` tags. After
 authenticating Helm to GHCR, the same package and publish operation is available
 locally through the shared platform task used by Gilti and Tesor:
 
@@ -74,7 +75,7 @@ locally through the shared platform task used by Gilti and Tesor:
 printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io \
   --username "$GITHUB_ACTOR" --password-stdin
 mise run chart -- \
-  --chart charts/mirum \
+  --chart deploy/charts/mirum \
   --version VERSION \
   --app-version VERSION \
   --push oci://ghcr.io/dimidiumlabs/charts

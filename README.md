@@ -12,24 +12,37 @@ podman run -d --name mirum-postgres -p 5432:5432 \
   -e POSTGRES_USER=mirum \
   -e POSTGRES_PASSWORD=mirum \
   postgres:18
-cargo run --locked -- --config config/mirum.toml
+cargo run --locked -- --config deploy/mirum.toml
 ```
+
+## Distribution
+
+Pushes to `main` update the `nightly` GitHub Release and publish signed APK,
+DEB, and RPM packages for AMD64, ARM64, and RISC-V 64 to
+[`pkg.dimidiumlabs.io/mirum`](https://pkg.dimidiumlabs.io/mirum/). Matching
+`v*` tags publish the same version to the `stable` package channel and a
+versioned GitHub Release.
+
+The AMD64, ARM64, and RISC-V 64 image is published as
+`ghcr.io/dimidiumlabs/mirum`. Main builds update `nightly`; version tags update
+`latest`. Every published build also has immutable version and commit-SHA tags.
 
 ## Helm
 
-The chart in [`charts/mirum`](charts/mirum) deploys Mirum with configuration
+The chart in [`deploy/charts/mirum`](deploy/charts/mirum) deploys Mirum with configuration
 from an existing Secret and can publish it through a Gateway API `HTTPRoute`.
 Pull requests validate the chart in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-Pushes to `main` and `v*` tags publish it to GHCR. The same operations are
+Pushes to `main` and `v*` tags publish it to GHCR through
+[`.github/workflows/release.yml`](.github/workflows/release.yml). The same operations are
 available locally through the shared platform task:
 
 ```console
-mise run chart -- --chart charts/mirum --lint-only
-mise run chart -- --chart charts/mirum --version VERSION \
+mise run chart -- --chart deploy/charts/mirum --lint-only
+mise run chart -- --chart deploy/charts/mirum --version VERSION \
   --app-version VERSION --push oci://ghcr.io/dimidiumlabs/charts
 ```
 
-See the [chart documentation](charts/mirum/README.md) for installation,
+See the [chart documentation](deploy/charts/mirum/README.md) for installation,
 PostgreSQL configuration, and Gateway values.
 
 ## Contributing

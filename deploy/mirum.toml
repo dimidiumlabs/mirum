@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 [server]
-addr = "127.0.0.1:8080"
+addr = "0.0.0.0:8080"
 hostnames = []
 
 header_read_timeout = "10s"

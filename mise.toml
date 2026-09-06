@@ -8,11 +8,34 @@ experimental = true
 
 [tools]
 "github:EmbarkStudios/cargo-about" = "0.8.4"
+"github:rust-cross/cargo-zigbuild" = "0.23.4"
 gh = "2.100.0"
 helm = "4.1.1"
 jq = "1.8.2"
-rust = { version = "1.97.1", profile = "minimal", components = ["clippy", "rustfmt"] }
+rust = { version = "1.97.1", profile = "minimal", components = ["clippy", "rustfmt"], targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "riscv64gc-unknown-linux-musl"] }
 shellcheck = "0.11.0"
+zig = "0.15.2"
+
+[bootstrap.packages]
+# APT
+"apt:apt-utils" = "latest"
+"apt:build-essential" = "latest"
+"apt:createrepo-c" = "latest"
+"apt:debsigs" = "latest"
+"apt:gnupg" = "latest"
+"apt:libssl-dev" = "latest"
+"apt:perl" = "latest"
+"apt:pkg-config" = "latest"
+"apt:rpm" = "latest"
+
+# DNF
+"dnf:createrepo_c" = "latest"
+"dnf:gcc" = "latest"
+"dnf:gnupg2" = "latest"
+"dnf:openssl-devel" = "latest"
+"dnf:perl" = "latest"
+"dnf:pkgconf-pkg-config" = "latest"
+"dnf:rpm" = "latest"
 
 [task_config]
 dir = "{{cwd}}"

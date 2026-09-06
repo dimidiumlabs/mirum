@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn parses_example_configuration() {
-        let config = parse(include_str!("../../../config/mirum.toml")).unwrap();
+        let config = parse(include_str!("../../../deploy/mirum.toml")).unwrap();
         config.validate().unwrap();
     }
 

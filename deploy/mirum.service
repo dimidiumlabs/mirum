@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[Unit]
+Description=Mirum web service
+Requires=network-online.target
+After=time-sync.target network-online.target remote-fs.target nss-lookup.target
+Wants=time-sync.target
+
+[Service]
+Type=simple
+User=mirum
+Group=mirum
+Restart=always
+RestartSec=30
+ExecPaths=/usr/local/bin/mirum /usr/lib
+ExecStart=/usr/local/bin/mirum --config /etc/mirum/config.toml
+LimitNOFILE=500000
+
+LogsDirectory=mirum
+RuntimeDirectory=mirum
+
+UMask=0077
+LockPersonality=yes
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=true
+ProcSubset=pid
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
