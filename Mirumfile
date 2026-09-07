@@ -202,6 +202,8 @@ mise run container -- \
     --sbom false \
     --load
 docker run --rm mirum:ci --help >/dev/null
+docker run --rm --entrypoint /usr/bin/sh mirum:ci -c \
+    'printf "int main(void) { return 0; }\n" | cc -x c - -o /tmp/main && /tmp/main'
 
 [ "${GITHUB_EVENT_NAME:-}" = push ] || exit 0
 

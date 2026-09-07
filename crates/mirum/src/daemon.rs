@@ -5,10 +5,11 @@ use std::sync::{Arc, LazyLock};
 
 use axum::{
     Router,
-    extract::State,
-    http::{StatusCode, header},
+    body::Bytes,
+    extract::{DefaultBodyLimit, Path, State},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use dimidiumlabs_server::{
     HtmlCompressionPredicate, assets_router,
@@ -22,7 +23,7 @@ use dimidiumlabs_server::{
 use dimidiumlabs_ui::{AssetsCatalog, Document, FOUNDATION};
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use maud::{Render, html};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 
 use crate::{config::Config, styles};
 
@@ -43,6 +44,8 @@ static ASSETS: LazyLock<Arc<AssetsCatalog>> = LazyLock::new(|| {
 #[derive(Clone)]
 struct AppState {
     database: PgPool,
+    webhook_secret: Arc<str>,
+    worker: Arc<tokio::sync::Semaphore>,
 }
 
 pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
@@ -54,9 +57,16 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         .connect(&config.database.url)
         .await?;
 
+    initialize_database(&database).await?;
+
     let app = Router::<AppState>::new()
         .merge(assets_router::<AppState>(Arc::clone(&ASSETS)))
         .route("/", get(index))
+        .route("/builds/{id}", get(build))
+        .route(
+            "/webhook",
+            post(webhook).layer(DefaultBodyLimit::max(1024 * 1024)),
+        )
         .route("/-/ready", get(readiness))
         .route(
             "/-/licenses.json",
@@ -79,7 +89,11 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                         .expect("compression threshold fits u16"),
                 )),
         )
-        .with_state(AppState { database });
+        .with_state(AppState {
+            database,
+            webhook_secret: config.webhook.secret.into(),
+            worker: Arc::new(tokio::sync::Semaphore::new(1)),
+        });
     let app = restrict_hosts(app, &config.server.hostnames);
     let (app, drain_handle, transport) = harden(app, &config.server)?;
     // Liveness stays outside admission and draining so overload cannot cause restart loops.
@@ -239,31 +253,309 @@ async fn serve(
     Ok(())
 }
 
-async fn index() -> Html<String> {
+async fn initialize_database(database: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS builds (
+            id BIGSERIAL PRIMARY KEY,
+            repository TEXT NOT NULL,
+            clone_url TEXT NOT NULL,
+            git_ref TEXT NOT NULL,
+            commit_sha TEXT NOT NULL,
+            status TEXT NOT NULL,
+            exit_code INTEGER,
+            log TEXT NOT NULL DEFAULT ''
+        )
+        "#,
+    )
+    .execute(database)
+    .await?;
+    sqlx::query("UPDATE builds SET status = 'interrupted' WHERE status IN ('queued', 'running')")
+        .execute(database)
+        .await?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct GithubPush {
+    #[serde(rename = "ref")]
+    git_ref: String,
+    after: String,
+    repository: GithubRepository,
+}
+
+#[derive(serde::Deserialize)]
+struct GithubRepository {
+    full_name: String,
+    clone_url: String,
+}
+
+async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+    let signature = headers
+        .get("x-hub-signature-256")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !verify_signature(&state.webhook_secret, signature, &body) {
+        return text_response(StatusCode::UNAUTHORIZED, "invalid signature\n");
+    }
+    if headers
+        .get("x-github-event")
+        .and_then(|value| value.to_str().ok())
+        != Some("push")
+    {
+        return response(StatusCode::NO_CONTENT, "text/plain", Vec::new());
+    }
+    let push: GithubPush = match serde_json::from_slice(&body) {
+        Ok(push) => push,
+        Err(_) => return text_response(StatusCode::BAD_REQUEST, "invalid payload\n"),
+    };
+    if push.after.bytes().all(|byte| byte == b'0') {
+        return response(StatusCode::NO_CONTENT, "text/plain", Vec::new());
+    }
+    if !matches!(push.after.len(), 40 | 64)
+        || !push.after.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || !(push.git_ref.starts_with("refs/heads/") || push.git_ref.starts_with("refs/tags/"))
+        || push.repository.full_name.is_empty()
+        || push.repository.clone_url.is_empty()
+    {
+        return text_response(StatusCode::BAD_REQUEST, "invalid push\n");
+    }
+
+    let id = match sqlx::query_scalar::<_, i64>(
+        "INSERT INTO builds (repository, clone_url, git_ref, commit_sha, status) \
+         VALUES ($1, $2, $3, $4, 'queued') RETURNING id",
+    )
+    .bind(&push.repository.full_name)
+    .bind(&push.repository.clone_url)
+    .bind(&push.git_ref)
+    .bind(push.after.to_ascii_lowercase())
+    .fetch_one(&state.database)
+    .await
+    {
+        Ok(id) => id,
+        Err(error) => return internal_error("queue build", error),
+    };
+
+    let database = state.database.clone();
+    let worker = Arc::clone(&state.worker);
+    tokio::spawn(async move {
+        let _permit = worker.acquire_owned().await.expect("worker stays open");
+        run_build(&database, id, &push).await;
+    });
+
+    axum::http::Response::builder()
+        .status(StatusCode::ACCEPTED)
+        .header(header::LOCATION, format!("/builds/{id}"))
+        .body(axum::body::Body::empty())
+        .expect("build response is valid")
+}
+
+fn verify_signature(secret: &str, signature: &str, body: &[u8]) -> bool {
+    let Some(signature) = signature.strip_prefix("sha256=") else {
+        return false;
+    };
+    let Ok(signature) = hex::decode(signature) else {
+        return false;
+    };
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret.as_bytes());
+    !secret.is_empty() && ring::hmac::verify(&key, body, &signature).is_ok()
+}
+
+async fn run_build(database: &PgPool, id: i64, push: &GithubPush) {
+    let _ = sqlx::query("UPDATE builds SET status = 'running' WHERE id = $1")
+        .bind(id)
+        .execute(database)
+        .await;
+    let mut log = format!(
+        "mirum: cloning {} at {}\n",
+        push.repository.full_name, push.after
+    );
+    let result = execute_build(push, &mut log).await;
+    let (status, exit_code) = match result {
+        Ok(0) => ("succeeded", Some(0)),
+        Ok(code) => {
+            log.push_str(&format!("mirum: Mirumfile exited with code {code}\n"));
+            ("failed", Some(code))
+        }
+        Err(error) => {
+            log.push_str(&format!("mirum: {error}\n"));
+            ("failed", None)
+        }
+    };
+    if let Err(error) =
+        sqlx::query("UPDATE builds SET status = $2, exit_code = $3, log = $4 WHERE id = $1")
+            .bind(id)
+            .bind(status)
+            .bind(exit_code)
+            .bind(log)
+            .execute(database)
+            .await
+    {
+        eprintln!("mirum: cannot finish build {id}: {error}");
+    }
+}
+
+async fn execute_build(push: &GithubPush, log: &mut String) -> Result<i32, String> {
+    let temporary = tempfile::Builder::new()
+        .prefix("mirum-build-")
+        .tempdir()
+        .map_err(|error| format!("create workspace: {error}"))?;
+    let checkout = temporary.path().join("repository");
+
+    let mut command = tokio::process::Command::new("git");
+    command
+        .args(["clone", "--no-checkout", "--"])
+        .arg(&push.repository.clone_url)
+        .arg(&checkout);
+    run_checked(&mut command, "git clone", log).await?;
+
+    let mut command = tokio::process::Command::new("git");
+    command
+        .arg("-C")
+        .arg(&checkout)
+        .args(["checkout", "--detach"])
+        .arg(&push.after);
+    run_checked(&mut command, "git checkout", log).await?;
+
+    let mirumfile = checkout.join("Mirumfile");
+    let metadata =
+        std::fs::metadata(&mirumfile).map_err(|error| format!("read Mirumfile: {error}"))?;
+    use std::os::unix::fs::PermissionsExt;
+    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+        return Err("Mirumfile is not an executable file".to_owned());
+    }
+
+    let mut command = tokio::process::Command::new(&mirumfile);
+    command
+        .current_dir(checkout)
+        .env("GITHUB_EVENT_NAME", "push")
+        .env("GITHUB_REF", &push.git_ref)
+        .env("GITHUB_SHA", &push.after)
+        .env("GITHUB_REPOSITORY", &push.repository.full_name);
+    let output = command
+        .kill_on_drop(true)
+        .output()
+        .await
+        .map_err(|error| format!("start Mirumfile: {error}"))?;
+    append_output(log, &output);
+    Ok(output.status.code().unwrap_or(1))
+}
+
+async fn run_checked(
+    command: &mut tokio::process::Command,
+    name: &str,
+    log: &mut String,
+) -> Result<(), String> {
+    let output = command
+        .kill_on_drop(true)
+        .output()
+        .await
+        .map_err(|error| format!("start {name}: {error}"))?;
+    append_output(log, &output);
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("{name} exited with {}", output.status))
+    }
+}
+
+fn append_output(log: &mut String, output: &std::process::Output) {
+    log.push_str(&String::from_utf8_lossy(&output.stdout));
+    log.push_str(&String::from_utf8_lossy(&output.stderr));
+}
+
+async fn index(State(state): State<AppState>) -> Response {
+    let rows = match sqlx::query(
+        "SELECT id, repository, commit_sha, status FROM builds ORDER BY id DESC LIMIT 100",
+    )
+    .fetch_all(&state.database)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(error) => return internal_error("load builds", error),
+    };
     let body = html! {
         main class="page" {
             header {
                 p class="eyebrow" { "Dimidium Labs" }
                 h1 { "Mirum" }
             }
-            section aria-labelledby="service-status" {
-                h2 id="service-status" { "Service is running" }
-                p { "The HTTP service, PostgreSQL pool, and web UI are ready for development." }
+            h2 { "Builds" }
+            @if rows.is_empty() {
+                p { "No builds yet." }
+            } @else {
+                ul {
+                    @for row in rows {
+                        @let id: i64 = row.get("id");
+                        @let repository: String = row.get("repository");
+                        @let commit: String = row.get("commit_sha");
+                        @let status: String = row.get("status");
+                        li {
+                            a href=(format!("/builds/{id}")) {
+                                "#" (id) " " (repository) " " (&commit[..12])
+                            }
+                            " — " (status)
+                        }
+                    }
+                }
             }
-            footer {
-                a href="https://git.dimidiumlabs.io/mirum" { "Source code" }
-            }
+            footer { a href="https://git.dimidiumlabs.io/mirum" { "Source code" } }
         }
     };
-    let index = Document::new("Mirum", body, &ASSETS)
-        .with_manifest()
-        .with_svg_icon()
-        .with_apple_touch_icon()
-        .with_head(html! { meta name="generator" content="Mirum"; })
-        .render()
-        .into_string();
+    page("Mirum", body, false).into_response()
+}
 
-    Html(index)
+async fn build(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    let row = match sqlx::query(
+        "SELECT repository, git_ref, commit_sha, status, exit_code, log \
+         FROM builds WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.database)
+    .await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => return text_response(StatusCode::NOT_FOUND, "build not found\n"),
+        Err(error) => return internal_error("load build", error),
+    };
+    let repository: String = row.get("repository");
+    let git_ref: String = row.get("git_ref");
+    let commit: String = row.get("commit_sha");
+    let status: String = row.get("status");
+    let exit_code: Option<i32> = row.get("exit_code");
+    let log: String = row.get("log");
+    let running = matches!(status.as_str(), "queued" | "running");
+    let title = format!("Build #{id} - Mirum");
+    let body = html! {
+        main class="page" {
+            header {
+                p class="eyebrow" { "Dimidium Labs" }
+                h1 { "Build #" (id) }
+            }
+            p { (repository) " at " code { (commit) } }
+            p { (git_ref) " — " (status) }
+            @if let Some(exit_code) = exit_code { p { "Exit code: " (exit_code) } }
+            h2 { "Log" }
+            pre { (log) }
+            footer { a href="/" { "All builds" } }
+        }
+    };
+    page(&title, body, running).into_response()
+}
+
+fn page(title: &str, body: maud::Markup, refresh: bool) -> Html<String> {
+    Html(
+        Document::new(title, body, &ASSETS)
+            .with_manifest()
+            .with_svg_icon()
+            .with_apple_touch_icon()
+            .with_head(html! {
+                meta name="generator" content="Mirum";
+                @if refresh { meta http-equiv="refresh" content="2"; }
+            })
+            .render()
+            .into_string(),
+    )
 }
 
 async fn health() -> Response {
@@ -288,6 +580,19 @@ fn json_status(status: StatusCode, value: &'static str) -> Response {
     )
 }
 
+fn internal_error(context: &str, error: impl std::fmt::Display) -> Response {
+    eprintln!("mirum: {context}: {error}");
+    text_response(StatusCode::INTERNAL_SERVER_ERROR, "internal server error\n")
+}
+
+fn text_response(status: StatusCode, body: &'static str) -> Response {
+    response(
+        status,
+        "text/plain; charset=utf-8",
+        body.as_bytes().to_vec(),
+    )
+}
+
 fn response(status: StatusCode, content_type: &'static str, body: Vec<u8>) -> Response {
     (status, [(header::CONTENT_TYPE, content_type)], body).into_response()
 }
@@ -308,5 +613,20 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = terminate => {}
         _ = interrupt => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verify_signature;
+
+    #[test]
+    fn verifies_github_signature() {
+        let body = b"payload";
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"secret");
+        let signature = format!("sha256={}", hex::encode(ring::hmac::sign(&key, body)));
+        assert!(verify_signature("secret", &signature, body));
+        assert!(!verify_signature("wrong", &signature, body));
+        assert!(!verify_signature("", &signature, body));
     }
 }

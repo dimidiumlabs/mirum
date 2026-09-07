@@ -15,6 +15,11 @@ podman run -d --name mirum-postgres -p 5432:5432 \
 cargo run --locked -- --config deploy/mirum.toml
 ```
 
+Set `webhook.secret` in the configuration and point a GitHub push webhook at
+`https://HOST/webhook`. Mirum verifies `X-Hub-Signature-256`, checks out the
+pushed commit, and executes its root `Mirumfile`. Build status and logs are
+available from the web UI.
+
 ## Distribution
 
 Pushes to `main` update the `nightly` GitHub Release and publish signed APK,

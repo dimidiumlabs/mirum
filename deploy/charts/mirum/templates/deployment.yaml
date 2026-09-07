@@ -12,6 +12,8 @@ metadata:
     {{- include "mirum.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "mirum.selectorLabels" . | nindent 6 }}
@@ -87,6 +89,8 @@ spec:
               mountPath: /etc/mirum/config.toml
               subPath: config.toml
               readOnly: true
+            - name: temporary
+              mountPath: /tmp
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -98,6 +102,8 @@ spec:
             items:
               - key: {{ required "config.key is required" .Values.config.key | quote }}
                 path: config.toml
+        - name: temporary
+          emptyDir: {}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

@@ -14,6 +14,9 @@ network rather than loopback:
 [server]
 addr = "0.0.0.0:8080"
 
+[webhook]
+secret = "replace-with-a-random-secret"
+
 [database]
 url = "postgres://mirum:password@postgres.database.svc:5432/mirum"
 max_connections = 10

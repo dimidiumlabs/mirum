@@ -21,6 +21,10 @@ max_concurrent_requests = 64
 admission_wait = "1s"
 shutdown_timeout = "25s"
 
+[webhook]
+# Empty disables webhook delivery.
+secret = ""
+
 [database]
 url = "postgres://mirum:mirum@127.0.0.1:5432/mirum"
 max_connections = 10

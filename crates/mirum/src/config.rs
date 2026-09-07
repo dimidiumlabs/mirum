@@ -52,6 +52,12 @@ impl Default for Server {
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Webhook {
+    pub secret: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Database {
@@ -75,6 +81,8 @@ const fn default_connect_timeout_seconds() -> u64 {
 pub struct Config {
     #[serde(default)]
     pub server: Server,
+    #[serde(default)]
+    pub webhook: Webhook,
     pub database: Database,
 }
 
@@ -226,6 +234,7 @@ mod tests {
         assert_eq!(config.server.addr.to_string(), "127.0.0.1:8080");
         assert_eq!(config.server.http1_max_buffer_bytes.as_u64(), 32 * 1024);
         assert_eq!(config.server.max_concurrent_requests, 64);
+        assert!(config.webhook.secret.is_empty());
         assert_eq!(config.database.max_connections, 10);
         assert_eq!(config.database.connect_timeout_seconds, 5);
         config.validate().unwrap();
