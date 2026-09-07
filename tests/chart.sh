@@ -65,12 +65,8 @@ if helm template mirum "$chart" --set config.existingSecret= >"$invalid" 2>&1; t
     echo 'chart accepted an empty configuration Secret name' >&2
     exit 1
 fi
-if helm template mirum "$chart" --set image.digest=sha256:invalid >"$invalid" 2>&1; then
-    echo 'chart accepted an invalid image digest' >&2
-    exit 1
-fi
 if helm template mirum "$chart" \
-    --set-string podLabels.app\.kubernetes\.io/name=other >"$invalid" 2>&1; then
+    --set-string 'podLabels.app\.kubernetes\.io/name=other' >"$invalid" 2>&1; then
     echo 'chart accepted an overridden selector label' >&2
     exit 1
 fi

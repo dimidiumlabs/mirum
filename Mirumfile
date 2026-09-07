@@ -4,6 +4,9 @@
 
 set -eu
 
+CARGO_TERM_COLOR=always
+export CARGO_TERM_COLOR
+
 if ! command -v mise >/dev/null 2>&1; then
     mise_version=2026.7.5
     case $(uname -m) in
@@ -53,112 +56,44 @@ if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
     fi
 fi
 
-mise bootstrap --locked --yes --update
+mise bootstrap --locked --yes
 eval "$(mise activate bash)"
+mise run package -- --bootstrap --update deb rpm apk
+mise run publish -- --bootstrap deb rpm apk
 
-# Legal checks
-mise run signoff
-mise run licenses
+mise run check -- --script tests/chart.sh
 
-# Static checks and tests
-cargo fmt --all --check
-shellcheck Mirumfile deploy/scripts/*.sh deploy/*.initd tests/*.sh
-cargo clippy --workspace --locked --all-targets --all-features --release -- -D warnings
-cargo test --workspace --all-features --release --locked
-tests/chart.sh
-
-base_version=$(cargo metadata --no-deps --format-version 1 |
-    jq -r '.packages[] | select(.name == "mirum") | .version')
-[ -n "$base_version" ] || {
-    echo "cannot determine mirum version" >&2
-    exit 1
-}
-
-revision=${GITHUB_SHA:-$(git rev-parse HEAD)}
-timestamp=$(git log -1 --format=%ct)
-SOURCE_DATE_EPOCH=$timestamp
-export SOURCE_DATE_EPOCH
-
-case ${GITHUB_REF:-} in
-    refs/tags/v*)
-        version=${GITHUB_REF#refs/tags/v}
-        [ "$version" = "$base_version" ] || {
-            echo "tag version $version does not match Cargo.toml version $base_version" >&2
-            exit 1
-        }
-        package_version=$version
-        channel=stable
-        release_tag="v$version"
-        release_name=$version
-        ;;
-    refs/heads/main)
-        version="$base_version-nightly.$timestamp"
-        package_version="$base_version~nightly.$timestamp"
-        channel=nightly
-        release_tag=nightly
-        release_name=nightly
-        ;;
-    *)
-        version="$base_version-pr.${GITHUB_RUN_NUMBER:-local}"
-        package_version="$base_version~pr.${GITHUB_RUN_NUMBER:-local}"
-        channel=
-        release_tag=
-        release_name=
-        ;;
-esac
-
+release_environment=$(mktemp)
+release_context_arguments=(
+    --package mirum
+    --source-ref "${GITHUB_REF:-}"
+    --revision "${GITHUB_SHA:-}"
+    --build-number "${GITHUB_RUN_NUMBER:-local}"
+    --output "$release_environment"
+)
 if [ "${GITHUB_EVENT_NAME:-}" = push ]; then
-    case ${GITHUB_REF:-} in
-        refs/heads/main | refs/tags/v*) ;;
-        *)
-            echo "ref is not publishable: ${GITHUB_REF:-unset}" >&2
-            exit 1
-            ;;
-    esac
-
     : "${GH_TOKEN:?GH_TOKEN is required for publishing}"
     : "${GITHUB_ACTOR:?GITHUB_ACTOR is required for publishing}"
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required for publishing}"
-    : "${GPG_KEY_ID:?GPG_KEY_ID is required for publishing}"
-    : "${GPG_PRIVATE_KEY:?GPG_PRIVATE_KEY is required for publishing}"
-    : "${GPG_PASSPHRASE:?GPG_PASSPHRASE is required for publishing}"
-    : "${APK_PRIVATE_KEY:?APK_PRIVATE_KEY is required for publishing}"
-    : "${PACKAGE_KEY_VERSION:?PACKAGE_KEY_VERSION is required for publishing}"
-    : "${S3_BUCKET:?S3_BUCKET is required for publishing}"
-    : "${S3_ENDPOINT:?S3_ENDPOINT is required for publishing}"
-    : "${S3_PUBLIC_URL:?S3_PUBLIC_URL is required for publishing}"
-    : "${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required for publishing}"
-    : "${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required for publishing}"
-    case $PACKAGE_KEY_VERSION in
-        [0-9][0-9][0-9][0-9]) ;;
-        *) echo "invalid PACKAGE_KEY_VERSION: $PACKAGE_KEY_VERSION" >&2; exit 1 ;;
-    esac
+    release_context_arguments+=(--publish)
 fi
+if ! mise run release-context -- "${release_context_arguments[@]}"; then
+    rm -f "$release_environment"
+    exit 1
+fi
+revision=
+version=
+package_version=
+channel=
+release_tag=
+release_name=
+publish=
+# shellcheck disable=SC1090
+. "$release_environment"
+rm -f "$release_environment"
 
 # Packages and architecture-specific container inputs
 rm -rf dist .container
-if [ "${GITHUB_EVENT_NAME:-}" = push ]; then
-    # Freeze OpenPGP signature times so a retry produces identical packages.
-    real_gpg=$(command -v gpg)
-    rpm_config_dir=$(rpm --eval '%{_rpmconfigdir}')
-    [ -d "$rpm_config_dir" ] || {
-        echo "RPM configuration directory not found: $rpm_config_dir" >&2
-        exit 1
-    }
-    install -d -m 0755 .container/repro-bin .container/rpm-config
-    cat >.container/repro-bin/gpg <<'EOF'
-#!/bin/sh
-exec "$REAL_GPG" --faked-system-time "${SOURCE_DATE_EPOCH}!" "$@"
-EOF
-    chmod 0755 .container/repro-bin/gpg
-    cp -a "$rpm_config_dir/." .container/rpm-config/
-    printf '\n%%_gpg_sign_cmd_extra_args --faked-system-time %s!\n' \
-        "$SOURCE_DATE_EPOCH" >>.container/rpm-config/macros
-    REAL_GPG=$real_gpg
-    RPM_CONFIGDIR=$PWD/.container/rpm-config
-    PATH=$PWD/.container/repro-bin:$PATH
-    export REAL_GPG RPM_CONFIGDIR PATH
-fi
 
 for architecture in amd64 arm64 riscv64; do
     case $architecture in
@@ -202,10 +137,11 @@ mise run container -- \
     --sbom false \
     --load
 docker run --rm mirum:ci --help >/dev/null
+
 docker run --rm --entrypoint /usr/bin/sh mirum:ci -c \
     'printf "int main(void) { return 0; }\n" | cc -x c - -o /tmp/main && /tmp/main'
 
-[ "${GITHUB_EVENT_NAME:-}" = push ] || exit 0
+[ "$publish" = true ] || exit 0
 
 repository_owner=$(printf '%s' "${GITHUB_REPOSITORY_OWNER:-dimidiumlabs}" |
     tr '[:upper:]' '[:lower:]')
@@ -223,6 +159,8 @@ gh auth token | helm registry login ghcr.io \
 mise run container -- \
     --file deploy/Dockerfile \
     --platform linux/amd64,linux/arm64,linux/riscv64 \
+    --cache-from type=gha,scope=mirum \
+    --cache-to type=gha,mode=max,scope=mirum \
     --tag "$image:sha-$revision" \
     --tag "$image:$image_version" \
     --label "org.opencontainers.image.revision=$revision" \
@@ -244,78 +182,18 @@ mise run publish -- \
     --input dist \
     deb rpm apk
 
-nightly_ref_existed=false
-if [ "$channel" = nightly ]; then
-    if gh api \
-        "repos/$GITHUB_REPOSITORY/git/ref/tags/$release_tag" >/dev/null 2>&1; then
-        nightly_ref_existed=true
-    fi
-    release_notes="Last successful build from \`main\` branch.
-
-**Version**: $version
-
-**Release checks**: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-else
-    release_notes="Release $version.
-
-**Release checks**: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-fi
-
-if gh release view "$release_tag" \
-    --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-    for asset in $(gh release view "$release_tag" \
-        --repo "$GITHUB_REPOSITORY" \
-        --json assets --jq '.assets[].name'); do
-        gh release delete-asset "$release_tag" "$asset" \
-            --repo "$GITHUB_REPOSITORY" --yes
-    done
-    if [ "$channel" = nightly ]; then
-        gh release edit "$release_tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$release_name" \
-            --prerelease \
-            --notes "$release_notes"
-    else
-        gh release edit "$release_tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$release_name" \
-            --notes "$release_notes"
-    fi
-elif [ "$channel" = nightly ]; then
-    gh release create "$release_tag" \
-        --repo "$GITHUB_REPOSITORY" \
-        --target "$revision" \
-        --title "$release_name" \
-        --prerelease \
-        --notes "$release_notes"
-else
-    gh release create "$release_tag" \
-        --repo "$GITHUB_REPOSITORY" \
-        --title "$release_name" \
-        --verify-tag \
-        --notes "$release_notes"
-fi
-gh release upload "$release_tag" \
-    dist/*.apk dist/*.deb dist/*.rpm \
-    --repo "$GITHUB_REPOSITORY"
-
 case $channel in
     nightly) mutable_image_tag=nightly ;;
     stable) mutable_image_tag=latest ;;
 esac
-docker buildx imagetools create \
-    --tag "$image:$mutable_image_tag" "$image:$image_version"
-
-# The mutable nightly ref is the final success marker for the whole release.
-if [ "$channel" = nightly ]; then
-    if [ "$nightly_ref_existed" = true ]; then
-        gh api --method PATCH \
-            "repos/$GITHUB_REPOSITORY/git/refs/tags/$release_tag" \
-            -f "sha=$revision" -F force=true >/dev/null
-    elif ! gh api \
-        "repos/$GITHUB_REPOSITORY/git/ref/tags/$release_tag" >/dev/null 2>&1; then
-        gh api --method POST \
-            "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f "ref=refs/tags/$release_tag" -f "sha=$revision" >/dev/null
-    fi
-fi
+mise run github-release -- \
+    --repository "$repository" \
+    --channel "$channel" \
+    --tag "$release_tag" \
+    --title "$release_name" \
+    --revision "$revision" \
+    --version "$version" \
+    --checks-url "$server_url/$repository/actions/runs/$GITHUB_RUN_ID" \
+    --image "$image:$image_version" \
+    --image-alias "$image:$mutable_image_tag" \
+    --asset dist/*.apk dist/*.deb dist/*.rpm

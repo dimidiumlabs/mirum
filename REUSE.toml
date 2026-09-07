@@ -5,31 +5,20 @@ version = 1
 
 [[annotations]]
 path = [
-  "Cargo.lock",
-  "mise.lock",
+    "deploy/charts/gilti/templates/*",
+    "crates/mirum/src/assets/*",
+    "Cargo.lock",
+    "mise.lock",
 ]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 [[annotations]]
-path = [
-  "README.md",
-  "deploy/charts/mirum/README.md",
-]
+path = ["README.md"]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov"
 SPDX-License-Identifier = "CC-BY-4.0"
 
 [[annotations]]
-path = [
-  "deploy/charts/mirum/values.schema.json",
-  "crates/mirum/src/assets/*",
-]
-SPDX-FileCopyrightText = "2026 Nikolay Govorov"
-SPDX-License-Identifier = "AGPL-3.0-or-later"
-
-[[annotations]]
-path = [
-  "CLA.md",
-]
+path = ["CLA.md"]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov"
 SPDX-License-Identifier = "CC-BY-3.0"
