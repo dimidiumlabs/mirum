@@ -5,7 +5,7 @@ mod config;
 mod daemon;
 mod styles;
 
-const USAGE: &str = "Usage: mirum --config <PATH>";
+const USAGE: &str = "Usage: mirum-server --config <PATH>";
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -16,14 +16,14 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::SUCCESS;
         }
         Err(error) => {
-            eprintln!("mirum: {error}\n{USAGE}");
+            eprintln!("mirum-server: {error}\n{USAGE}");
             return std::process::ExitCode::FAILURE;
         }
     };
     let config = match config::Config::load(&config_path) {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("mirum: {error}");
+            eprintln!("mirum-server: {error}");
             return std::process::ExitCode::FAILURE;
         }
     };
@@ -31,7 +31,7 @@ async fn main() -> std::process::ExitCode {
     match daemon::run(config).await {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("mirum: {error}");
+            eprintln!("mirum-server: {error}");
             std::process::ExitCode::FAILURE
         }
     }

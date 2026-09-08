@@ -1,0 +1,250 @@
+#!/bin/sh -eux
+# SPDX-FileCopyrightText: 2017-2026 Drew DeVault
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-only
+
+self=$(dirname "$(readlink -f "$0")")
+cd "$self"
+
+with_ports=false
+
+while [ $# -gt 0 ]; do
+	case $1 in
+	--with-ports)
+		with_ports=true
+		shift
+		;;
+	--no-with-ports)
+		with_ports=false
+		shift
+		;;
+	--)
+		shift
+		break
+		;;
+	-*)
+		echo "Unknown option $1" >&2
+		exit 1
+		;;
+	*)
+		break
+		;;
+	esac
+done
+
+version=${1:-}
+arch="${2:-amd64}"
+
+case $version in
+14.x)
+	release="14.4-RELEASE"
+	;;
+15.x)
+	release="15.1-RELEASE"
+	;;
+current)
+	release="16.0"
+	;;
+*)
+	echo "usage: ${0##*/} <14.x|15.x|current> [arch]" >&2
+	exit 1
+	;;
+esac
+
+rel=${release%%.*}
+out="$version/$arch"
+rootfs=disk
+reposdir=$(pwd)/$rootfs/usr/local/etc/pkg/repos
+
+export ABI="FreeBSD:$rel:$arch"
+export IGNORE_OSVERSION=yes
+
+cleanup() {
+	umount "$rootfs"/usr/share/keys/pkg 2>/dev/null || true
+	chflags -R noschg "$rootfs" || true
+	rm -rf "$rootfs" disk.img || true
+}
+trap cleanup EXIT
+
+rm -rf "$rootfs" disk.img
+mkdir -p "$rootfs"
+mkdir -p "$reposdir"
+
+# Package repository used both to install the base (on -CURRENT) and to add
+# tooling below. ${ABI} is expanded by pkg, not the shell.
+cat >"$reposdir"/FreeBSD.conf <<EOF
+FreeBSD: {
+	url: pkg+http://pkg.FreeBSD.org/\$\{ABI\}/latest
+	enabled: yes
+	mirror_type: srv
+	signature_type: fingerprint
+}
+EOF
+
+case $version in
+
+current)
+	# -CURRENT has no release tarballs; assemble the base from pkg base.
+	cat >>"$reposdir"/FreeBSD.conf <<EOF
+FreeBSD-base: {
+	url: pkg+http://pkg.FreeBSD.org/\$\{ABI\}/base_latest
+	enabled: yes
+	mirror_type: srv
+	signature_type: fingerprint
+}
+EOF
+	# The base is not installed yet, so borrow the host's signing keys for
+	# the first fetch.
+	mkdir -p "$rootfs"/usr/share/keys/pkg
+	mount -t nullfs /usr/share/keys/pkg "$rootfs"/usr/share/keys/pkg
+	pkg -C /dev/null -R "$reposdir" -r "$rootfs" update
+	umount "$rootfs"/usr/share/keys/pkg
+	# XXX replace by group FreeBSD-base the day it is implemented :D
+	pkg -C /dev/null -R "$reposdir" -r "$rootfs" rquery -g "%n" "FreeBSD*" |
+		grep -vE "(lib32|dbg|kernel|src|tests)" |
+		xargs pkg -C /dev/null -R "$reposdir" -r "$rootfs" install -y
+	if pkg -C /dev/null -R "$reposdir" -r "$rootfs" install -y FreeBSD-kernel-generic-nodebug; then
+		echo "kernel=kernel.GENERIC-NODEBUG" >"$rootfs"/boot/loader.conf
+	else
+		pkg -C /dev/null -R "$reposdir" -r "$rootfs" install -y FreeBSD-kernel-generic
+	fi
+	;;
+
+*)
+	# RELEASE: extract the published distribution tarballs into the tree.
+	dist_base="https://download.freebsd.org/ftp/releases/$arch/$release"
+	dist_files="kernel.txz base.txz"
+	dist_dir="/usr/freebsd-dist/$arch/$release"
+
+	mkdir -p "$dist_dir"
+	for f in $dist_files; do
+		fetch -m -o "$dist_dir/$f" "$dist_base/$f"
+	done
+	for f in $dist_files; do
+		tar -C "$rootfs" -xJf "$dist_dir/$f"
+	done
+
+	# Apply security patches (only defined for -RELEASE).
+	if [ "${release%-RELEASE}" != "$release" ]; then
+		env PAGER=true /usr/sbin/freebsd-update \
+			-b "$rootfs" \
+			--currently-running "$release" \
+			--not-running-from-cron -F \
+			fetch install
+	fi
+	;;
+
+esac
+
+# --- Common: tooling, guest configuration, image assembly. ---
+# pkg runs on the host against the alternate root, so it uses the host's
+# resolver; the guest resolv.conf written below is purely for runtime.
+pkg -C /dev/null -R "$reposdir" -r "$rootfs" update
+pkg -C /dev/null -R "$reposdir" -r "$rootfs" install -y \
+	pkg git-lite mercurial sudo curl qemu-guest-agent
+pkg -C /dev/null -R "$reposdir" -r "$rootfs" clean -ay
+
+if [ "$with_ports" = true ]; then
+	git clone https://github.com/freebsd/freebsd-ports "$rootfs"/usr/ports \
+		--depth=1 --single-branch
+fi
+
+echo "/dev/gpt/rootfs / ufs rw,noatime 1 1" >"$rootfs"/etc/fstab
+touch "$rootfs"/firstboot
+echo 'autoboot_delay="-1"' >>"$rootfs"/boot/loader.conf
+
+cat >>"$rootfs"/etc/rc.conf <<EOF
+ntpd_enable=YES
+sshd_enable=YES
+growfs_enable=YES
+qemu_guest_agent_enable=YES
+hostname="build"
+ifconfig_DEFAULT="inet 10.0.2.15 netmask 255.255.255.0"
+defaultrouter="10.0.2.2"
+EOF
+
+cat >"$rootfs"/etc/resolv.conf <<EOF
+nameserver 8.8.8.8
+nameserver 9.9.9.9
+nameserver 1.1.1.1
+EOF
+tzsetup -s -C "$rootfs" UTC
+
+cat >>"$rootfs"/etc/ssh/sshd_config <<EOF
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords yes
+UsePAM no
+EOF
+
+pw -R "$rootfs" groupadd sudo
+pw -R "$rootfs" useradd -n build -u 1000 -s /bin/sh -m -w none -G sudo
+echo "%sudo ALL=(ALL) NOPASSWD: ALL" >>"$rootfs"/usr/local/etc/sudoers
+
+# Build the UFS image straight from the directory tree, then wrap it in a
+# bootable GPT qcow2 -- no md(4), mount or raw->qcow2 conversion needed.
+makefs -s 8g -B little -o label=rootfs -o version=2 -o softupdates=1 disk.img "$rootfs"
+mkdir -p "$out"
+# .hmi (Mirum VM image): mkimg emits a plain qcow2; keep it snapshot-free so
+# it materializes losslessly to raw. Base image = chain root, no backing.
+size_gib=16
+mkimg -s gpt \
+	-b "$rootfs"/boot/pmbr \
+	-C "${size_gib}G" \
+	-p freebsd-boot:="$rootfs"/boot/gptboot \
+	-p freebsd-ufs/rootfs:=disk.img \
+	-f qcow2 \
+	-o "$out"/root.hmi
+
+cleanup
+trap : EXIT
+
+# --- Mirum VM configuration (`config.json`) ------------------------------
+# GPT + freebsd-boot (gptboot/pmbr), booted by the VMM's BIOS firmware. No
+# boot.cmdline (the FreeBSD loader owns boot; firmware-disk takes none from the
+# VMM). FreeBSD host tools: sha256(1) and stat -f, not GNU coreutils.
+disk_sha=$(sha256 -q "$out/root.hmi")
+disk_bytes=$(stat -f%z "$out/root.hmi")
+virtual_bytes=$((size_gib * 1024 * 1024 * 1024))
+mem_min=$((256 * 1024 * 1024))
+mem_def=$((1024 * 1024 * 1024))
+
+cat >"$out/config.json" <<CONFIG
+{
+  "schemaVersion": 1,
+  "kind": "MachineImage",
+
+  "system": {
+    "os": "freebsd",
+    "version": "$version",
+    "architecture": "$arch"
+  },
+
+  "machine": {
+    "cpu": { "minimum": 1, "default": 2 },
+    "ram": { "minimum": $mem_min, "default": $mem_def },
+    "boot": [
+      {
+        "protocol": "firmware-disk/bios",
+        "disk": "root"
+      }
+    ],
+    "access": [
+      { "type": "ssh", "port": 22, "user": "build", "auth": "empty-password" },
+      { "type": "qga" }
+    ],
+    "network": { "mode": "static", "address": "10.0.2.15/24", "gateway": "10.0.2.2" }
+  },
+
+  "disks": [
+    {
+      "id": "root",
+      "format": "qcow2",
+      "path": "root.hmi",
+      "digest": "sha256:$disk_sha",
+      "virtSize": $virtual_bytes,
+      "diskSize": $disk_bytes
+    }
+  ]
+}
+CONFIG

@@ -2,6 +2,19 @@
 
 The CI platform I’ve always wanted to have.
 
+## Mirum VM
+
+The workspace also contains `mirum-vm`, tooling for distributing and running
+portable virtual-machine images through OCI registries. See the
+[Mirum VM whitepaper](docs/mirum-vm/whitepaper.md) for the format and
+architecture, or run the CLI locally:
+
+```console
+cargo run --package mirum-vm -- --help
+```
+
+Image-generation scripts and examples live under [`images`](images).
+
 ## Development
 
 Server expects a local PostgreSQL role and database named `mirum`:
@@ -12,7 +25,7 @@ podman run -d --name mirum-postgres -p 5432:5432 \
   -e POSTGRES_USER=mirum \
   -e POSTGRES_PASSWORD=mirum \
   postgres:18
-cargo run --locked -- --config deploy/mirum.toml
+cargo run --locked --package mirum-server -- --config deploy/mirum.toml
 ```
 
 Set `webhook.secret` in the configuration and point a GitHub push webhook at
@@ -24,9 +37,9 @@ available from the web UI.
 
 Pushes to `main` update the `nightly` GitHub Release and publish signed APK,
 DEB, and RPM packages for AMD64, ARM64, and RISC-V 64 to
-[`pkg.dimidiumlabs.io/mirum`](https://pkg.dimidiumlabs.io/mirum/). Matching
-`v*` tags publish the same version to the `stable` package channel and a
-versioned GitHub Release.
+[`pkg.dimidiumlabs.io/mirum`](https://pkg.dimidiumlabs.io/mirum/). Matching `v*`
+tags publish the same version to the `stable` package channel and a versioned
+GitHub Release.
 
 The AMD64, ARM64, and RISC-V 64 image is published as
 `ghcr.io/dimidiumlabs/mirum`. Main builds update `nightly`; version tags update
@@ -34,12 +47,13 @@ The AMD64, ARM64, and RISC-V 64 image is published as
 
 ## Helm
 
-The chart in [`deploy/charts/mirum`](deploy/charts/mirum) deploys Mirum with configuration
-from an existing Secret and can publish it through a Gateway API `HTTPRoute`.
-Pull requests validate the chart in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-Pushes to `main` and `v*` tags publish it to GHCR through
-[`.github/workflows/release.yml`](.github/workflows/release.yml). The same operations are
-available locally through the shared platform task:
+The chart in [`deploy/charts/mirum`](deploy/charts/mirum) deploys Mirum with
+configuration from an existing Secret and can publish it through a Gateway API
+`HTTPRoute`. Pull requests validate the chart in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml). Pushes to `main` and
+`v*` tags publish it to GHCR through
+[`.github/workflows/release.yml`](.github/workflows/release.yml). The same
+operations are available locally through the shared platform task:
 
 ```console
 mise run chart -- --chart deploy/charts/mirum --lint-only
@@ -85,5 +99,9 @@ Remember, AI agents should make software better, not worse.
 ## Licensing
 
 Mirum source code is licensed under AGPL-3.0-or-later. Documentation is licensed
-under CC-BY-4.0. Components installed into the image retain their respective
-upstream licenses.
+under CC-BY-4.0. Generated machine images and their installed components retain
+their respective upstream licenses.
+
+Image-generation scripts in `images/*/genimg`. Those scripts are derived from
+code originally published by Drew DeVault as part of [SourceHut](https://sr.ht)
+and remain licensed under AGPL-3.0-only

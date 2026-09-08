@@ -102,7 +102,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let listen_addr = config.server.addr;
     let listener = tokio::net::TcpListener::bind(listen_addr).await?;
     let shutdown = tokio_util::sync::CancellationToken::new();
-    eprintln!("mirum: listening on {listen_addr}");
+    eprintln!("mirum-server: listening on {listen_addr}");
 
     let server = serve(listener, app, transport, shutdown.clone());
     tokio::pin!(server);
@@ -233,13 +233,13 @@ async fn serve(
                         }
                     };
                     if let Err(error) = result {
-                        eprintln!("mirum: HTTP connection failed: {error}");
+                        eprintln!("mirum-server: HTTP connection failed: {error}");
                     }
                 });
             }
             Some(result) = connections.join_next(), if !connections.is_empty() => {
                 if let Err(error) = result {
-                    eprintln!("mirum: HTTP connection task failed: {error}");
+                    eprintln!("mirum-server: HTTP connection task failed: {error}");
                 }
             }
         }
@@ -247,7 +247,7 @@ async fn serve(
 
     while let Some(result) = connections.join_next().await {
         if let Err(error) = result {
-            eprintln!("mirum: HTTP connection task failed: {error}");
+            eprintln!("mirum-server: HTTP connection task failed: {error}");
         }
     }
     Ok(())
@@ -367,18 +367,20 @@ async fn run_build(database: &PgPool, id: i64, push: &GithubPush) {
         .execute(database)
         .await;
     let mut log = format!(
-        "mirum: cloning {} at {}\n",
+        "mirum-server: cloning {} at {}\n",
         push.repository.full_name, push.after
     );
     let result = execute_build(push, &mut log).await;
     let (status, exit_code) = match result {
         Ok(0) => ("succeeded", Some(0)),
         Ok(code) => {
-            log.push_str(&format!("mirum: Mirumfile exited with code {code}\n"));
+            log.push_str(&format!(
+                "mirum-server: Mirumfile exited with code {code}\n"
+            ));
             ("failed", Some(code))
         }
         Err(error) => {
-            log.push_str(&format!("mirum: {error}\n"));
+            log.push_str(&format!("mirum-server: {error}\n"));
             ("failed", None)
         }
     };
@@ -391,7 +393,7 @@ async fn run_build(database: &PgPool, id: i64, push: &GithubPush) {
             .execute(database)
             .await
     {
-        eprintln!("mirum: cannot finish build {id}: {error}");
+        eprintln!("mirum-server: cannot finish build {id}: {error}");
     }
 }
 
@@ -581,7 +583,7 @@ fn json_status(status: StatusCode, value: &'static str) -> Response {
 }
 
 fn internal_error(context: &str, error: impl std::fmt::Display) -> Response {
-    eprintln!("mirum: {context}: {error}");
+    eprintln!("mirum-server: {context}: {error}");
     text_response(StatusCode::INTERNAL_SERVER_ERROR, "internal server error\n")
 }
 

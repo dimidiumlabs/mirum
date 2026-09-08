@@ -26,7 +26,7 @@ RUN apt-get update && \
       libc6-dev=2.41-12+deb13u3 && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --chown=root:root --chmod=0755 .container/binary-${TARGETARCH}/mirum /usr/local/bin/mirum
+COPY --chown=root:root --chmod=0755 .container/binary-${TARGETARCH}/mirum-server /usr/local/bin/mirum-server
 COPY --chown=root:root deploy/mirum.toml /etc/mirum/config.toml
 COPY --chown=root:root LICENSE README.md LICENSES/ /usr/share/doc/mirum/
 
@@ -34,5 +34,5 @@ ENV HOME=/tmp
 USER 10000:10000
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/mirum"]
+ENTRYPOINT ["/usr/local/bin/mirum-server"]
 CMD ["--config", "/etc/mirum/config.toml"]

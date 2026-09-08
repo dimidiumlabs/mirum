@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 [package]
-name = "mirum"
-description = "Mirum service"
+name = "mirum-server"
+description = "Mirum server"
 version.workspace = true
 
 build = "build.rs"

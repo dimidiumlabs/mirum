@@ -1,0 +1,261 @@
+#!/bin/sh -eux
+# SPDX-FileCopyrightText: 2017-2026 Drew DeVault
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-only
+
+self=$(dirname "$(readlink -f "$0")")
+cd "$self"
+
+version=${1:-}
+arch="${2:-amd64}"
+linux="${linux:-linux-lts}"
+
+case $version in
+3.20 | 3.21 | 3.22 | 3.23 | 3.24)
+	release="v$version"
+	;;
+edge)
+	release="edge"
+	;;
+*)
+	echo "usage: ${0##*/} <3.20|3.21|3.22|3.23|3.24|edge> [arch]" >&2
+	exit 1
+	;;
+esac
+
+case $arch in
+amd64) apk_arch=x86_64 ;;
+arm64) apk_arch=aarch64 ;;
+*)
+	echo "unsupported architecture $arch" >&2
+	exit 1
+	;;
+esac
+
+out="$version/$arch"
+
+cleanup() {
+	# The order here is important if you don't want to hose your mounts
+	sync
+	umount -f /mnt/dev/pts 2>/dev/null || true
+	umount -f /mnt/dev/shm 2>/dev/null || true
+	umount -f /mnt/dev 2>/dev/null || true
+	umount -f /mnt/proc 2>/dev/null || true
+	umount -f /mnt/run 2>/dev/null || true
+	umount -f /mnt/sys 2>/dev/null || true
+	umount -f /mnt/boot 2>/dev/null || true
+	umount -f /mnt 2>/dev/null || true
+	swapoff /dev/nbd0p2 || true
+	qemu-nbd --disconnect /dev/nbd0 || true
+}
+
+size_gib=24
+mkdir -p "$out"
+
+qemu-img create -f qcow2 -o compat=1.1 "$out"/root.hmi "${size_gib}G"
+modprobe nbd max_part=16
+qemu-nbd --connect=/dev/nbd0 "$out"/root.hmi
+for i in $(seq 1 5); do
+	sleep "0.$i"
+	partprobe /dev/nbd0 && break
+done
+trap cleanup EXIT
+
+if [ "$arch" = "amd64" ]; then
+	dd if=/usr/share/syslinux/mbr.bin of=/dev/nbd0 bs=1 count=440
+fi
+sfdisk --no-reread /dev/nbd0 <<EOF
+1M,100M,L,*
+,2048M,S
+,,L
+EOF
+mdev -s
+
+mkfs.ext4 /dev/nbd0p1
+mkswap /dev/nbd0p2
+mkfs.ext4 /dev/nbd0p3
+
+mount /dev/nbd0p3 /mnt
+mkdir /mnt/boot
+mount /dev/nbd0p1 /mnt/boot
+swapon /dev/nbd0p2
+
+# TODO: Remove bash
+apk add -U \
+	-X "http://dl-cdn.alpinelinux.org/alpine/$release/main/" \
+	-X "http://dl-cdn.alpinelinux.org/alpine/$release/community/" \
+	--allow-untrusted \
+	--arch="$apk_arch" \
+	--root=/mnt \
+	--initdb \
+	acct alpine-base alpine-conf alpine-sdk linux-firmware-none "$linux" \
+	git mercurial openssh sudo syslinux tzdata gnupg haveged bash curl \
+	doas qemu-guest-agent
+
+mount --bind /dev /mnt/dev
+mount --bind /dev/pts /mnt/dev/pts
+mount --bind /dev/shm /mnt/dev/shm
+mount --bind /proc /mnt/proc
+mount --bind /run /mnt/run
+mount --bind /sys /mnt/sys
+
+run_root() {
+	chroot /mnt /usr/bin/env \
+		PATH=/sbin:/usr/sbin:/bin:/usr/bin \
+		/bin/sh -c "$*"
+}
+
+run_root setup-hostname -n build
+run_root setup-interfaces -i <<EOF
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+	hostname build
+	address 10.0.2.15
+	netmask 255.255.255.0
+	gateway 10.0.2.2
+EOF
+run_root setup-dns -d example.org 8.8.8.8 9.9.9.9 1.1.1.1
+if [ "$release" = "edge" ]; then
+	run_root setup-timezone UTC
+	cat >/mnt/etc/apk/repositories <<EOF
+http://dl-cdn.alpinelinux.org/alpine/$release/main
+http://dl-cdn.alpinelinux.org/alpine/$release/community
+http://dl-cdn.alpinelinux.org/alpine/$release/testing
+EOF
+else
+	run_root setup-timezone -z UTC
+	cat >/mnt/etc/apk/repositories <<EOF
+http://dl-cdn.alpinelinux.org/alpine/$release/main
+http://dl-cdn.alpinelinux.org/alpine/$release/community
+EOF
+fi
+
+extlinux -i /mnt/boot
+
+# Alpine uses mdev rather than udev, so create the stable, named virtio-port
+# symlink expected by qemu-ga without depending on controller/port numbers.
+mkdir -p /mnt/etc/mdev
+cat >/mnt/etc/mdev/virtio-port <<'EOF'
+#!/bin/sh
+name=$(cat "/sys/class/virtio-ports/$MDEV/name") || exit
+[ "$name" = org.qemu.guest_agent.0 ] || exit
+mkdir -p /dev/virtio-ports
+ln -sf "/dev/$MDEV" "/dev/virtio-ports/$name"
+EOF
+chmod +x /mnt/etc/mdev/virtio-port
+echo 'vport.* root:root 0600 @/etc/mdev/virtio-port' >>/mnt/etc/mdev.conf
+
+for i in ntpd sshd crond haveged qemu-guest-agent; do
+	run_root rc-update add $i default
+done
+for i in hwclock modules sysctl hostname bootmisc loadkmap networking seedrng syslog swap; do
+	run_root rc-update add $i boot
+done
+for i in devfs dmesg hwdrivers mdev; do
+	run_root rc-update add $i sysinit
+done
+for i in mount-ro killprocs savecache; do
+	run_root rc-update add $i shutdown
+done
+
+sed -e 's/#PermitEmptyPasswords no/PermitEmptyPasswords yes/' \
+	-i /mnt/etc/ssh/sshd_config
+
+run_root adduser -u 1000 -D -h /home/build -s /bin/sh build
+run_root adduser build wheel
+run_root adduser build kvm
+run_root adduser build abuild
+run_root passwd -u build
+
+printf '%s\n' "%wheel ALL=(ALL) NOPASSWD: ALL" >>/mnt/etc/sudoers
+rm -f /mnt/etc/motd
+printf 'permit nopass :wheel\n' >>/mnt/etc/doas.d/doas.conf
+
+boot_uuid=$(blkid -s UUID -o value /dev/nbd0p1)
+root_uuid=$(blkid -s UUID -o value /dev/nbd0p3)
+cmdline="root=UUID=$root_uuid rw modules=sd-mod,usb-storage,ext4 quiet rootfstype=ext4"
+
+cat >/mnt/boot/extlinux.conf <<EOF
+DEFAULT linux
+LABEL linux
+	LINUX vmlinuz-$(echo "$linux" | cut -d- -f2-)
+	INITRD initramfs-$(echo "$linux" | cut -d- -f2-)
+	APPEND $cmdline
+EOF
+
+cat >>/mnt/etc/fstab <<EOF
+UUID=$boot_uuid /boot ext4 rw,relatime,data=ordered 0 0
+/dev/vda2       swap  swap defaults                 0 0
+UUID=$root_uuid /     ext4 rw,relatime,data=ordered 0 0
+EOF
+
+mkdir -p /mnt/etc/docker
+cat >/mnt/etc/docker/daemon.json <<EOF
+{
+	"bip": "172.18.0.1/16"
+}
+EOF
+
+pkg_version() {
+	name=$(run_root apk list "$1" | grep installed | cut -d' ' -f1)
+	echo "${name##"$1"-}"
+}
+
+run_root apk add "$linux=$(pkg_version "$linux")"
+
+sync
+
+# Detach the disk so root.hmi is fully flushed before hashing; disarm cleanup.
+cleanup
+trap : EXIT
+
+# --- Mirum VM configuration (`config.json`) ------------------------------
+disk_sha=$(sha256sum "$out/root.hmi" | cut -d' ' -f1)
+disk_bytes=$(stat -c%s "$out/root.hmi")
+virtual_bytes=$((size_gib * 1024 * 1024 * 1024))
+mem_min=$((256 * 1024 * 1024))
+mem_def=$((1024 * 1024 * 1024))
+
+cat >"$out/config.json" <<EOF
+{
+  "schemaVersion": 1,
+  "kind": "MachineImage",
+
+  "system": {
+    "os": "linux",
+    "name": "alpine",
+    "version": "$version",
+    "architecture": "$arch"
+  },
+
+  "machine": {
+    "cpu": { "minimum": 1, "default": 2 },
+    "ram": { "minimum": $mem_min, "default": $mem_def },
+    "boot": [
+      {
+        "protocol": "firmware-disk/bios",
+        "disk": "root"
+      }
+    ],
+    "access": [
+      { "type": "ssh", "port": 22, "user": "build", "auth": "empty-password" },
+      { "type": "qga" }
+    ],
+    "network": { "mode": "static", "address": "10.0.2.15/24", "gateway": "10.0.2.2" }
+  },
+
+  "disks": [
+    {
+      "id": "root",
+      "format": "qcow2",
+      "path": "root.hmi",
+      "digest": "sha256:$disk_sha",
+      "virtSize": $virtual_bytes,
+      "diskSize": $disk_bytes
+    }
+  ]
+}
+EOF

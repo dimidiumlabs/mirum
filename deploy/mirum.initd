@@ -5,7 +5,7 @@
 
 description="Mirum web service"
 
-command="/usr/local/bin/mirum"
+command="/usr/local/bin/mirum-server"
 command_args="--config /etc/mirum/config.toml"
 command_user="mirum:mirum"
 

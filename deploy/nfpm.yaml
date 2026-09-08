@@ -24,8 +24,8 @@ contents:
   - src: ./README.md
     dst: /usr/share/doc/mirum/README.md
 
-  - src: target/release/mirum
-    dst: /usr/local/bin/mirum
+  - src: target/release/mirum-server
+    dst: /usr/local/bin/mirum-server
     file_info:
       mode: 0755
 

@@ -1,0 +1,242 @@
+#!/bin/sh -eux
+# SPDX-FileCopyrightText: 2017-2026 Drew DeVault
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Network Block Device used to interact with the QCOW2 image.
+NBD_DEVICE=/dev/nbd0
+
+self=$(dirname "$(readlink -f "$0")")
+cd "$self"
+
+release=${1:-}
+arch=${2:-amd64}
+
+case $release in
+42 | 43 | 44) ;;
+*)
+	echo "usage: ${0##*/} <42|43|44> [arch]" >&2
+	exit 1
+	;;
+esac
+
+case $arch in
+amd64)
+	fedora_arch=x86_64
+	iface=ens3
+	;;
+*)
+	echo "unsupported architecture $arch"
+	exit 1
+	;;
+esac
+
+cleanup() {
+	# The order here is important if you don't want to hose your mounts
+	umount /mnt/dev/pts 2>/dev/null || true
+	umount /mnt/dev/shm 2>/dev/null || true
+	umount /mnt/dev 2>/dev/null || true
+	umount /mnt/proc 2>/dev/null || true
+	umount /mnt/run 2>/dev/null || true
+	umount /mnt/sys/firmware 2>/dev/null || true
+	umount /mnt/sys 2>/dev/null || true
+	umount /mnt/boot 2>/dev/null || true
+	umount /mnt 2>/dev/null || true
+	qemu-nbd --disconnect $NBD_DEVICE || true
+}
+
+run_root() {
+	chroot /mnt /usr/bin/env \
+		PATH=/sbin:/usr/sbin:/bin:/usr/bin \
+		sh -c "$*"
+}
+
+out="$release/$arch"
+size_gib=24
+mkdir -p "$out"
+
+# .hmi (Mirum VM image): plain qcow2 restricted to a feature subset that
+# materializes losslessly to raw (no internal snapshots/bitmaps/encryption).
+# Base image = chain root, so no backing. Never `qemu-img snapshot` it.
+qemu-img create -f qcow2 -o compat=1.1 "$out/root.hmi" "${size_gib}G"
+modprobe nbd max_part=16
+qemu-nbd --connect=$NBD_DEVICE "$out/root.hmi"
+trap cleanup EXIT
+
+# Looks like qemu-nbd is non-blocking. Wait one second to make sure $NBD_DEVICE
+# is available.
+sleep 1
+
+sfdisk --no-reread $NBD_DEVICE <<EOF
+1M,300M,L,*
+,2048M,S
+,,L
+EOF
+
+mkfs.ext4 ${NBD_DEVICE}p1
+mkswap ${NBD_DEVICE}p2
+mkfs.ext4 ${NBD_DEVICE}p3
+
+mount ${NBD_DEVICE}p3 /mnt
+mkdir /mnt/boot
+mount ${NBD_DEVICE}p1 /mnt/boot
+
+conditional_packages=''
+if [ "$release" -gt 32 ]; then
+	conditional_packages=systemd-networkd
+fi
+
+dnf -y \
+	--releasever="$release" \
+	--installroot=/mnt \
+	--setopt=reposdir=/etc/yum.repos.d/ \
+	--disablerepo='*' \
+	--enablerepo=fedora \
+	--enablerepo=updates install \
+	--setopt=install_weak_deps=False \
+	basesystem systemd systemd-udev passwd dnf dnf-plugins-core dnf5-plugins fedora-release $conditional_packages
+
+mount --bind /dev /mnt/dev
+mount --bind /dev/pts /mnt/dev/pts
+mount --bind /dev/shm /mnt/dev/shm
+mount --bind /proc /mnt/proc
+mount --bind /run /mnt/run
+mount --bind /sys /mnt/sys
+
+# This is a BIOS-only image (no ESP), but the build host may boot via UEFI. Since
+# /sys is bind-mounted from the host, grub2-mkconfig's 10_linux sees the host's
+# /sys/firmware/efi and probes the nonexistent /boot/efi ("failed to get canonical
+# path of /boot/efi/"). Shadow /sys/firmware with an empty tmpfs so the chroot's
+# grub sees a BIOS platform regardless of how the host booted. Make the bind
+# private first so the tmpfs doesn't propagate back and hide firmware on the host.
+mount --make-rprivate /mnt/sys
+mount -t tmpfs tmpfs /mnt/sys/firmware
+
+# Remove systemd-networkd symlink, which is useless in our chroot.
+rm -f /mnt/etc/resolv.conf
+
+echo 'nameserver 8.8.8.8' >/mnt/etc/resolv.conf
+echo 'nameserver 9.9.9.9' >>/mnt/etc/resolv.conf
+echo 'nameserver 1.1.1.1' >>/mnt/etc/resolv.conf
+cat >/mnt/etc/systemd/network/25-$iface.network <<EOF
+[Match]
+Name=$iface
+
+[Network]
+Address=10.0.2.15/24
+Gateway=10.0.2.2
+EOF
+
+echo build >/mnt/etc/hostname
+cat >/mnt/etc/hosts <<EOF
+127.0.0.1 localhost
+127.0.0.1 build
+EOF
+
+run_root systemd-machine-id-setup
+run_root systemctl enable systemd-networkd.service
+run_root ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+run_root systemctl enable systemd-timesyncd.service
+
+run_root dnf -y \
+	--releasever="$release" \
+	install \
+	@development-tools git mercurial openssh-server sudo kernel grub2 \
+	qemu-guest-agent
+
+run_root dnf clean all
+
+# Add support for virtio block devices at boot time.
+cat >/mnt/etc/dracut.conf.d/virtio-blk.conf <<EOF
+add_drivers="virtio-blk"
+EOF
+kernel_path=
+for candidate in /mnt/boot/vmlinuz-*."$fedora_arch"; do
+	[ -e "$candidate" ] || continue
+	kernel_path=$candidate
+	break
+done
+[ -n "$kernel_path" ]
+kernel_version=${kernel_path##*/vmlinuz-}
+run_root dracut --force --kver "$kernel_version"
+
+run_root grub2-install --target=i386-pc $NBD_DEVICE
+run_root grub2-mkconfig -o /boot/grub2/grub.cfg
+
+run_root ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+run_root systemctl enable systemd-timesyncd.service
+
+run_root groupadd sudo
+run_root useradd -mG sudo build
+run_root passwd -d build
+echo '%sudo ALL=(ALL) NOPASSWD: ALL' >>/mnt/etc/sudoers
+
+echo "PermitEmptyPasswords yes" >>/mnt/etc/ssh/sshd_config
+echo ssh >>/mnt/etc/securetty
+run_root systemctl enable sshd
+run_root systemctl enable qemu-guest-agent
+
+boot_uuid=$(blkid --match-tag UUID --output value ${NBD_DEVICE}p1)
+swap_uuid=$(blkid --match-tag UUID --output value ${NBD_DEVICE}p2)
+root_uuid=$(blkid --match-tag UUID --output value ${NBD_DEVICE}p3)
+cat >>/mnt/etc/fstab <<EOF
+UUID=$boot_uuid /boot ext4 rw,relatime,data=ordered 0 0
+UUID=$swap_uuid swap  swap defaults                 0 0
+UUID=$root_uuid /     ext4 rw,relatime,data=ordered 0 0
+EOF
+
+sync
+
+# Detach the disk so root.hmi is fully flushed before hashing; disarm cleanup.
+cleanup
+trap : EXIT
+
+# --- Mirum VM configuration (`config.json`) ------------------------------
+# amd64 only, self-booting via grub2 (BIOS). No boot.cmdline: grub owns it and
+# firmware-disk boot takes no cmdline from the VMM.
+disk_sha=$(sha256sum "$out/root.hmi" | cut -d' ' -f1)
+disk_bytes=$(stat -c%s "$out/root.hmi")
+virtual_bytes=$((size_gib * 1024 * 1024 * 1024))
+mem_min=$((256 * 1024 * 1024))
+mem_def=$((1024 * 1024 * 1024))
+
+cat >"$out/config.json" <<EOF
+{
+  "schemaVersion": 1,
+  "kind": "MachineImage",
+
+  "system": {
+    "os": "linux",
+    "name": "fedora",
+    "version": "$release",
+    "architecture": "$arch"
+  },
+
+  "machine": {
+    "cpu": { "minimum": 1, "default": 2 },
+    "ram": { "minimum": $mem_min, "default": $mem_def },
+    "boot": [
+      {
+        "protocol": "firmware-disk/bios",
+        "disk": "root"
+      }
+    ],
+    "access": [
+      { "type": "ssh", "port": 22, "user": "build", "auth": "empty-password" },
+      { "type": "qga" }
+    ],
+    "network": { "mode": "static", "address": "10.0.2.15/24", "gateway": "10.0.2.2" }
+  },
+
+  "disks": [
+    {
+      "id": "root",
+      "format": "qcow2",
+      "path": "root.hmi",
+      "digest": "sha256:$disk_sha",
+      "virtSize": $virtual_bytes,
+      "diskSize": $disk_bytes
+    }
+  ]
+}
+EOF

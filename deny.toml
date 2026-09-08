@@ -10,6 +10,9 @@ allow = [
   "BSD-3-Clause",
   "MPL-2.0",
 
+  # Mozilla CA certificate data used by the OCI client.
+  "CDLA-Permissive-2.0",
+
   # Build-only Oxc's number formatter is dual-licensed under this alternative.
   "BSL-1.0",
 

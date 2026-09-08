@@ -8,3 +8,11 @@ mise.*.local.toml
 
 /.container
 /.mirum-state
+
+__pycache__
+*.qcow2
+
+# Built VM images and manifests
+*.hmi
+*.hmm
+/images/*/*/*/config.json

@@ -62,10 +62,11 @@ mise run package -- --bootstrap --update deb rpm apk
 mise run publish -- --bootstrap deb rpm apk
 
 mise run check -- --script tests/chart.sh
+mise exec -- shellcheck images/*/genimg
 
 release_environment=$(mktemp)
 release_context_arguments=(
-    --package mirum
+    --package mirum-server
     --source-ref "${GITHUB_REF:-}"
     --revision "${GITHUB_SHA:-}"
     --build-number "${GITHUB_RUN_NUMBER:-local}"
@@ -106,12 +107,16 @@ for architecture in amd64 arm64 riscv64; do
         --manifest-path Cargo.toml \
         --locked \
         --release \
-        --package mirum \
+        --package mirum-server \
+        --package mirum-vm \
         --target "$target"
 
-    container_binary=".container/binary-$architecture/mirum"
-    install -Dm0755 "target/$target/release/mirum" "$container_binary"
-    install -Dm0755 "$container_binary" target/release/mirum
+    binary_directory=".container/binary-$architecture"
+    install -Dm0755 "target/$target/release/mirum-server" \
+        "$binary_directory/mirum-server"
+    install -Dm0755 "target/$target/release/mirum-vm" \
+        "$binary_directory/mirum-vm"
+    install -Dm0755 "$binary_directory/mirum-server" target/release/mirum-server
     mise run package -- \
         --config deploy/nfpm.yaml \
         --version "$package_version" \

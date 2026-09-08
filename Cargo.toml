@@ -16,6 +16,12 @@ homepage = "https://git.dimidiumlabs.io/mirum"
 repository = "https://git.dimidiumlabs.io/mirum"
 
 [workspace.dependencies]
+# local dependencies
+mirum-vm-hmi = { path = "crates/mirum-vm-hmi" }
+mirum-vm-oci = { path = "crates/mirum-vm-oci" }
+mirum-vm-vmm = { path = "crates/mirum-vm-vmm" }
+
+# external dependencies
 axum = "0.8.4"
 bytesize = { version = "2.3", features = ["serde"] }
 hex = "0.4.3"

@@ -13,8 +13,8 @@ User=mirum
 Group=mirum
 Restart=always
 RestartSec=30
-ExecPaths=/usr/local/bin/mirum /usr/lib
-ExecStart=/usr/local/bin/mirum --config /etc/mirum/config.toml
+ExecPaths=/usr/local/bin/mirum-server /usr/lib
+ExecStart=/usr/local/bin/mirum-server --config /etc/mirum/config.toml
 LimitNOFILE=500000
 
 LogsDirectory=mirum

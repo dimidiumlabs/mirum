@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "mirum-vm-oci"
+description = "OCI storage and registry support for Mirum VM images"
+version.workspace = true
+
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mirum-vm-hmi.workspace = true
+oci-client = "0.17"
+serde_json.workspace = true
+sha2 = "0.10"
+tokio = { workspace = true, features = ["fs", "io-util", "rt"] }
+zstd = "0.13"

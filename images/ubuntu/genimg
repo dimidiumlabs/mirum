@@ -1,0 +1,305 @@
+#!/bin/sh -eux
+# SPDX-FileCopyrightText: 2017-2026 Drew DeVault
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: AGPL-3.0-only
+
+self=$(dirname "$(readlink -f "$0")")
+cd "$self"
+
+release=${1:-}
+arch=${2:-amd64}
+
+case $release in
+jammy | noble | resolute) ;;
+*)
+	echo "usage: ${0##*/} <jammy|noble|resolute> [arch]" >&2
+	exit 1
+	;;
+esac
+
+case $arch in
+amd64)
+	iface=ens3
+	qarch=x86_64
+	;;
+arm64)
+	iface=enp0s1
+	qarch=aarch64
+	;;
+*)
+	echo "unsupported architecture $arch"
+	exit 1
+	;;
+esac
+
+cleanup() {
+	# The order here is important if you don't want to hose your mounts
+	cat /mnt/debootstrap/debootstrap.log || true
+	umount /mnt/dev/pts 2>/dev/null || true
+	umount /mnt/dev/shm 2>/dev/null || true
+	umount /mnt/dev 2>/dev/null || true
+	umount /mnt/proc 2>/dev/null || true
+	umount /mnt/run 2>/dev/null || true
+	umount /mnt/sys 2>/dev/null || true
+	umount /mnt/boot 2>/dev/null || true
+	umount /mnt 2>/dev/null || true
+	qemu-nbd --disconnect /dev/nbd0 || true
+}
+
+out="$release/$arch"
+size_gib=32
+mkdir -p "$out"
+
+qemu-img create -f qcow2 -o compat=1.1 "$out/root.hmi" "${size_gib}G"
+modprobe nbd max_part=16
+qemu-nbd --connect=/dev/nbd0 "$out/root.hmi"
+trap cleanup EXIT
+
+# Looks like qemu-nbd is non-blocking. Wait one second to make sure $NBD_DEVICE
+# is available.
+sleep 1
+
+if [ "$arch" = "amd64" ]; then
+	dd if=/usr/lib/syslinux/mbr/mbr.bin of=/dev/nbd0 bs=1 count=440
+fi
+
+sfdisk --no-reread /dev/nbd0 <<EOF
+1M,256M,L,*
+,4096M,S
+,,L
+EOF
+
+mkfs.ext4 /dev/nbd0p1
+mkswap /dev/nbd0p2
+mkfs.ext4 /dev/nbd0p3
+
+mount /dev/nbd0p3 /mnt
+mkdir /mnt/boot
+mount /dev/nbd0p1 /mnt/boot
+
+export DEBIAN_FRONTEND=noninteractive
+
+debootstrap \
+	--include=gnupg,ubuntu-keyring \
+	--arch="$arch" "$release" \
+	/mnt http://archive.ubuntu.com/ubuntu/
+
+mount --bind /dev /mnt/dev
+mount --bind /dev/pts /mnt/dev/pts
+mount --bind /dev/shm /mnt/dev/shm
+mount --bind /proc /mnt/proc
+mount --bind /run /mnt/run
+mount --bind /sys /mnt/sys
+
+if [ "$arch" != "amd64" ]; then
+	cp /usr/bin/qemu-$qarch-static /mnt/usr/bin
+fi
+
+run_root() {
+	chroot /mnt /usr/bin/env \
+		PATH=/sbin:/usr/sbin:/bin:/usr/bin \
+		sh -c "$*"
+}
+
+rm -f /mnt/etc/resolv.conf
+echo 'nameserver 8.8.8.8' >/mnt/etc/resolv.conf
+echo 'nameserver 9.9.9.9' >>/mnt/etc/resolv.conf
+echo 'nameserver 1.1.1.1' >>/mnt/etc/resolv.conf
+# Network config baked into the guest; the manifest declares it (mode + params)
+# so consumers know how the image is reachable. Single source, so the two stay
+# in sync.
+net_mode=static
+net_address=10.0.2.15/24
+net_gateway=10.0.2.2
+cat >"/mnt/etc/systemd/network/25-$iface.network" <<EOF
+[Match]
+Name=$iface
+
+[Network]
+Address=$net_address
+Gateway=$net_gateway
+EOF
+
+run_root systemctl enable systemd-networkd.service
+run_root systemctl enable systemd-timesyncd.service ||
+	run_root systemctl enable chrony.service
+
+cat <<EOF >/mnt/etc/hosts
+127.0.0.1 localhost.localdomain localhost
+::1 localhost.localdomain localhost
+127.0.0.1 build.localdomain build
+EOF
+
+cat >/mnt/etc/apt/sources.list <<EOF
+deb http://archive.ubuntu.com/ubuntu/ $release main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu/ $release-security main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu/ $release-updates main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu/ $release-backports main restricted universe multiverse
+EOF
+run_root apt-get update
+run_root apt-get -y upgrade
+run_root apt-get -y install locales
+run_root apt-get -y install linux-base
+run_root apt-get -y install linux-image-generic
+run_root apt-get -y install \
+	build-essential git mercurial ssh sudo dirmngr curl ca-certificates \
+	qemu-guest-agent
+
+if [ "$arch" = "amd64" ]; then
+	extlinux -i /mnt/boot
+fi
+
+run_root ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+run_root systemctl enable systemd-timesyncd.service ||
+	run_root systemctl enable chrony.service
+
+run_root useradd -mG sudo build
+run_root passwd -d build
+echo '%sudo ALL=(ALL) NOPASSWD: ALL' >>/mnt/etc/sudoers
+
+echo "PermitEmptyPasswords yes" >>/mnt/etc/ssh/sshd_config
+echo ssh >>/mnt/etc/securetty
+run_root systemctl enable ssh
+run_root systemctl enable qemu-guest-agent
+
+# Prevent docker from mucking up networking
+mkdir -p /mnt/etc/docker
+cat >/mnt/etc/docker/daemon.json <<EOF
+{
+	"bip": "172.18.0.1/16"
+}
+EOF
+
+run_root update-initramfs -u
+
+kernel_path=
+for candidate in /mnt/boot/vmlinuz-[0-9]*; do
+	[ -e "$candidate" ] || continue
+	kernel_path=$candidate
+	break
+done
+[ -n "$kernel_path" ]
+linuxver=${kernel_path##*/vmlinuz-}
+
+# Reference partitions by PARTUUID so boot works regardless of how the VMM names
+# the disk (vda/sda/nvme...). cmdline is canonical: identical for every boot
+# protocol (extlinux here, and -append on the direct path) -- see
+# docs/boot-protocol.md.
+boot_partuuid=$(blkid -s PARTUUID -o value /dev/nbd0p1)
+swap_partuuid=$(blkid -s PARTUUID -o value /dev/nbd0p2)
+root_partuuid=$(blkid -s PARTUUID -o value /dev/nbd0p3)
+cmdline="root=PARTUUID=$root_partuuid rw quiet"
+
+cat >/mnt/boot/extlinux.conf <<EOF
+default ubuntu
+label ubuntu
+	linux vmlinuz-$linuxver
+	initrd initrd.img-$linuxver
+	append $cmdline
+EOF
+
+cat >>/mnt/etc/fstab <<EOF
+PARTUUID=$boot_partuuid /boot ext4 rw,relatime,data=ordered 0 0
+PARTUUID=$swap_partuuid swap  swap defaults                 0 0
+PARTUUID=$root_partuuid /     ext4 rw,relatime,data=ordered 0 0
+EOF
+
+if [ "$arch" != "amd64" ]; then
+	# Sidecar kernel/initrd for the linux-boot protocol: there is no
+	# in-image bootloader on non-amd64, the VMM boots these directly.
+	cp /mnt/boot/vmlinuz "$out/vmlinuz"
+	cp /mnt/boot/initrd.img "$out/initrd"
+fi
+
+sync
+
+# Detach the disk so root.hmi is fully flushed before we hash it, then stop
+# the cleanup trap from running a second time on exit.
+cleanup
+trap : EXIT
+
+# --- Mirum VM configuration (`config.json`) ------------------------------
+# JSON description of the image: the .hmi disk(s), the boot protocols this image
+# can honestly be booted with, and the surfaces it exposes. The declaration is a
+# promise (see docs/boot-protocol.md); only list what this build produces.
+# Self-contained: paths + checksums, no dependency on OCI (layers are transport
+# only). Sizes are integer bytes, keys are camelCase, disks referenced by id.
+disk_sha=$(sha256sum "$out/root.hmi" | cut -d' ' -f1)
+disk_bytes=$(stat -c%s "$out/root.hmi")
+virtual_bytes=$((size_gib * 1024 * 1024 * 1024))
+mem_min=$((256 * 1024 * 1024))
+mem_def=$((1024 * 1024 * 1024))
+
+case "$arch" in
+amd64)
+	# Legacy BIOS: extlinux inside an MBR-partitioned disk, booted by the
+	# VMM's BIOS firmware (e.g. SeaBIOS). Self-bootable, no external inputs.
+	protocols=$(
+		cat <<JSON
+      {
+        "protocol": "firmware-disk/bios",
+        "disk": "root"
+      }
+JSON
+	)
+	;;
+*)
+	# No in-image bootloader; the VMM boots the extracted kernel/initrd
+	# directly and mounts the root disk. cmdline is canonical (boot.cmdline).
+	kernel_sha=$(sha256sum "$out/vmlinuz" | cut -d' ' -f1)
+	initrd_sha=$(sha256sum "$out/initrd" | cut -d' ' -f1)
+	protocols=$(
+		cat <<JSON
+    {
+      "protocol": "linux/direct",
+      "disk": "root",
+      "kernel": { "path": "vmlinuz", "digest": "sha256:$kernel_sha" },
+      "initrd": { "path": "initrd",  "digest": "sha256:$initrd_sha" },
+      "cmdline": "$cmdline"
+    }
+JSON
+	)
+	;;
+esac
+
+cat >"$out/config.json" <<EOF
+{
+  "schemaVersion": 1,
+  "kind": "MachineImage",
+
+  "system": {
+    "os": "linux",
+    "name": "ubuntu",
+    "version": "$release",
+    "architecture": "$arch"
+  },
+
+  "machine": {
+    "cpu": { "minimum": 1, "default": 2 },
+    "ram": { "minimum": $mem_min, "default": $mem_def },
+    "boot": [
+$protocols
+    ],
+    "access": [
+      { "type": "ssh", "port": 22, "user": "build", "auth": "empty-password" },
+      { "type": "qga" }
+    ],
+    "network": {
+      "mode": "$net_mode",
+      "address": "$net_address",
+      "gateway": "$net_gateway"
+    }
+  },
+
+  "disks": [
+    {
+      "id": "root",
+      "format": "qcow2",
+      "path": "root.hmi",
+      "digest": "sha256:$disk_sha",
+      "virtSize": $virtual_bytes,
+      "diskSize": $disk_bytes
+    }
+  ]
+}
+EOF
