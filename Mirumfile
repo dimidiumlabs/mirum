@@ -117,6 +117,7 @@ for architecture in amd64 arm64 riscv64; do
     install -Dm0755 "target/$target/release/mirum-vm" \
         "$binary_directory/mirum-vm"
     install -Dm0755 "$binary_directory/mirum-server" target/release/mirum-server
+    install -Dm0755 "$binary_directory/mirum-vm" target/release/mirum-vm
     mise run package -- \
         --config deploy/nfpm.yaml \
         --version "$package_version" \

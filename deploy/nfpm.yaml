@@ -28,6 +28,10 @@ contents:
     dst: /usr/local/bin/mirum-server
     file_info:
       mode: 0755
+  - src: target/release/mirum-vm
+    dst: /usr/local/bin/mirum-vm
+    file_info:
+      mode: 0755
 
   - src: deploy/mirum.toml
     dst: /etc/mirum/config.toml

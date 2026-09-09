@@ -37,10 +37,11 @@ available from the web UI.
 
 Pushes to `main` update the `nightly` GitHub Release and publish signed APK,
 DEB, and RPM packages for AMD64, ARM64, and RISC-V 64 to
-[`pkg.dimidiumlabs.io/mirum`](https://pkg.dimidiumlabs.io/mirum/). GitHub
-releases also include standalone `mirum-server` and `mirum-vm` binaries plus a
-`SHA256SUMS` manifest. Matching `v*` tags publish the same version to the
-`stable` package channel and a versioned GitHub Release.
+[`pkg.dimidiumlabs.io/mirum`](https://pkg.dimidiumlabs.io/mirum/). The packages
+contain both `mirum-server` and `mirum-vm`. GitHub releases also provide both as
+standalone binaries alongside a `SHA256SUMS` manifest. Matching `v*` tags
+publish the same version to the `stable` package channel and a versioned GitHub
+Release.
 
 The AMD64, ARM64, and RISC-V 64 image is published as
 `ghcr.io/dimidiumlabs/mirum`. Main builds update `nightly`; version tags update
