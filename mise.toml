@@ -19,5 +19,5 @@ zig = "0.15.2"
 [task_config]
 dir = "{{cwd}}"
 includes = [
-  "git::https://git.dimidiumlabs.io/platform.git//tasks?ref=340bdf218344fd6b235c402f1d024c1e2446245a",
+  "git::https://git.dimidiumlabs.io/platform.git//tasks?ref=901d24f1de9e31e4a50c0b8114ae43cf52c1b4c4",
 ]

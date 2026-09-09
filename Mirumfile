@@ -199,6 +199,13 @@ mise run github-release -- \
     --revision "$revision" \
     --version "$version" \
     --checks-url "$server_url/$repository/actions/runs/$GITHUB_RUN_ID" \
+    --binary \
+        mirum-server-linux-amd64=.container/binary-amd64/mirum-server \
+        mirum-server-linux-arm64=.container/binary-arm64/mirum-server \
+        mirum-server-linux-riscv64=.container/binary-riscv64/mirum-server \
+        mirum-vm-linux-amd64=.container/binary-amd64/mirum-vm \
+        mirum-vm-linux-arm64=.container/binary-arm64/mirum-vm \
+        mirum-vm-linux-riscv64=.container/binary-riscv64/mirum-vm \
     --image "$image:$image_version" \
     --image-alias "$image:$mutable_image_tag" \
     --asset dist/*.apk dist/*.deb dist/*.rpm
