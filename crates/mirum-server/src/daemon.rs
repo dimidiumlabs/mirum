@@ -85,8 +85,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                     config.server.compression_level,
                 )))
                 .compress_when(HtmlCompressionPredicate::new(
-                    u16::try_from(config.server.compression_min_bytes.as_u64())
-                        .expect("compression threshold fits u16"),
+                    config.server.compression_min_bytes.get(),
                 )),
         )
         .with_state(AppState {
@@ -111,7 +110,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         () = shutdown_signal() => {
             let _ = drain_handle.begin();
             shutdown.cancel();
-            let drained = tokio::time::timeout(config.server.shutdown_timeout, async {
+            let drained = tokio::time::timeout(config.server.shutdown_timeout.as_std(), async {
                 server.await?;
                 drain_handle.wait().await;
                 std::io::Result::Ok(())
@@ -159,13 +158,12 @@ fn harden(
     let app = app
         .layer(
             dimidiumlabs_server::service::body::RequestBodyLimitLayer::new(
-                usize::try_from(config.request_body_max_bytes.as_u64())
-                    .expect("request body limit fits usize"),
+                config.request_body_max_bytes.get(),
             ),
         )
         .layer(
             dimidiumlabs_server::service::timeout::RequestBodyTimeoutLayer::new(
-                config.request_body_idle_timeout,
+                config.request_body_idle_timeout.as_std(),
             ),
         )
         .layer(
@@ -174,7 +172,7 @@ fn harden(
                     .expect("concurrency limit is non-zero"),
             )
             .with_wait(
-                config.admission_wait,
+                config.admission_wait.as_std(),
                 std::num::NonZeroUsize::new(config.max_queued_requests)
                     .expect("queue limit is non-zero"),
             ),
@@ -185,16 +183,12 @@ fn harden(
         )))
         .layer(drain_layer);
     let transport = HttpTransport::new(
-        config.header_read_timeout,
-        usize::try_from(config.http1_max_buffer_bytes.as_u64())
-            .expect("HTTP/1 buffer size fits usize"),
+        config.header_read_timeout.as_std(),
+        config.http1_max_buffer_bytes.get(),
         std::num::NonZeroU32::new(config.http2_max_concurrent_streams)
             .expect("HTTP/2 stream limit is non-zero"),
-        std::num::NonZeroU32::new(
-            u32::try_from(config.http2_max_header_list_bytes.as_u64())
-                .expect("HTTP/2 header-list size fits u32"),
-        )
-        .expect("HTTP/2 header limit is non-zero"),
+        std::num::NonZeroU32::new(config.http2_max_header_list_bytes.get())
+            .expect("HTTP/2 header limit is non-zero"),
     )?;
     Ok((app, drain_handle, transport))
 }

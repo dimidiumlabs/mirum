@@ -19,16 +19,16 @@ rust-version.workspace = true
 workspace = true
 
 [build-dependencies]
-dimidiumlabs-ui-build = { git = "https://git.dimidiumlabs.io/platform.git", rev = "d6639bb2f831afedfa0b55faf5869311b04d9d74" }
+dimidiumlabs-ui-build = { git = "https://git.dimidiumlabs.io/platform.git", rev = "024596fdce489827a66da779ec28a714b22a6658" }
 
 [dependencies]
-dimidiumlabs-server = { git = "https://git.dimidiumlabs.io/platform.git", rev = "d6639bb2f831afedfa0b55faf5869311b04d9d74" }
-dimidiumlabs-ui = { git = "https://git.dimidiumlabs.io/platform.git", rev = "d6639bb2f831afedfa0b55faf5869311b04d9d74" }
+dimidiumlabs-config = { git = "https://git.dimidiumlabs.io/platform.git", rev = "024596fdce489827a66da779ec28a714b22a6658" }
+dimidiumlabs-server = { git = "https://git.dimidiumlabs.io/platform.git", rev = "024596fdce489827a66da779ec28a714b22a6658" }
+dimidiumlabs-ui = { git = "https://git.dimidiumlabs.io/platform.git", rev = "024596fdce489827a66da779ec28a714b22a6658" }
 
 axum.workspace = true
-bytesize.workspace = true
+garde = { version = "0.23", features = ["derive"] }
 hex.workspace = true
-humantime-serde.workspace = true
 hyper-util.workspace = true
 ipnet.workspace = true
 maud.workspace = true
@@ -39,4 +39,3 @@ sqlx.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-toml.workspace = true

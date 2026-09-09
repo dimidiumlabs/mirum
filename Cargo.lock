@@ -335,9 +335,6 @@ name = "bytesize"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7354288c522e7e980fafd2075d63d1285794c3a6a16cdd492f189ea406e5f18b"
-dependencies = [
- "serde_core",
-]
 
 [[package]]
 name = "castaway"
@@ -475,6 +472,20 @@ checksum = "cfc320937d09e6de266b31b9afb480f197d7a861be86be7cb2ea7e5d1bfffc5e"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "compact_str"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dfdd1c2274d9aa354115b09dc9a901d6c5576818cdf70d14cae2bdb47df00ab"
+dependencies = [
+ "castaway",
+ "cfg-if",
+ "itoa",
+ "rustversion",
+ "ryu",
+ "static_assertions",
 ]
 
 [[package]]
@@ -798,9 +809,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimidiumlabs-config"
+version = "0.1.0"
+source = "git+https://git.dimidiumlabs.io/platform.git?rev=024596fdce489827a66da779ec28a714b22a6658#024596fdce489827a66da779ec28a714b22a6658"
+dependencies = [
+ "bytesize",
+ "garde",
+ "humantime",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "dimidiumlabs-server"
 version = "0.1.0"
-source = "git+https://git.dimidiumlabs.io/platform.git?rev=d6639bb2f831afedfa0b55faf5869311b04d9d74#d6639bb2f831afedfa0b55faf5869311b04d9d74"
+source = "git+https://git.dimidiumlabs.io/platform.git?rev=024596fdce489827a66da779ec28a714b22a6658#024596fdce489827a66da779ec28a714b22a6658"
 dependencies = [
  "arc-swap",
  "axum",
@@ -823,7 +849,7 @@ dependencies = [
 [[package]]
 name = "dimidiumlabs-ui"
 version = "0.1.0"
-source = "git+https://git.dimidiumlabs.io/platform.git?rev=d6639bb2f831afedfa0b55faf5869311b04d9d74#d6639bb2f831afedfa0b55faf5869311b04d9d74"
+source = "git+https://git.dimidiumlabs.io/platform.git?rev=024596fdce489827a66da779ec28a714b22a6658#024596fdce489827a66da779ec28a714b22a6658"
 dependencies = [
  "dimidiumlabs-ui-build",
  "maud",
@@ -832,7 +858,7 @@ dependencies = [
 [[package]]
 name = "dimidiumlabs-ui-build"
 version = "0.1.0"
-source = "git+https://git.dimidiumlabs.io/platform.git?rev=d6639bb2f831afedfa0b55faf5869311b04d9d74#d6639bb2f831afedfa0b55faf5869311b04d9d74"
+source = "git+https://git.dimidiumlabs.io/platform.git?rev=024596fdce489827a66da779ec28a714b22a6658#024596fdce489827a66da779ec28a714b22a6658"
 dependencies = [
  "base64 0.22.1",
  "brotli",
@@ -1105,6 +1131,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "garde"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d7f479d28d1daedf23970890723b8774d120aa627abcb33c1d7c93d0965e6c3"
+dependencies = [
+ "compact_str 0.9.1",
+ "garde_derive",
+ "smallvec",
+]
+
+[[package]]
+name = "garde_derive"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b0252cacdca8e6f30a900e6d436fbf294e23f674b9288ca4a5bd35976bef87c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1338,16 +1386,6 @@ name = "humantime"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "15cdd26707701c53297e2fa6afb323d55fbc1d0810c3aec078ae3ef0424c3c15"
-
-[[package]]
-name = "humantime-serde"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57a3db5ea5923d99402c94e9feb261dc5ee9b4efa158b0315f788cf549cc200c"
-dependencies = [
- "humantime",
- "serde",
-]
 
 [[package]]
 name = "hybrid-array"
@@ -1900,12 +1938,12 @@ name = "mirum-server"
 version = "0.1.0"
 dependencies = [
  "axum",
- "bytesize",
+ "dimidiumlabs-config",
  "dimidiumlabs-server",
  "dimidiumlabs-ui",
  "dimidiumlabs-ui-build",
+ "garde",
  "hex",
- "humantime-serde",
  "hyper-util",
  "ipnet",
  "maud",
@@ -1916,7 +1954,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
- "toml",
 ]
 
 [[package]]
@@ -2406,7 +2443,7 @@ version = "0.148.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0d038b28e7037ab6dfded105eb35d12cdc58f6b9959dee9ae3244142fd45852"
 dependencies = [
- "compact_str",
+ "compact_str 0.10.0",
  "oxc_allocator",
  "oxc_ast_macros",
  "oxc_estree",
@@ -2419,7 +2456,7 @@ version = "0.148.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "463caa681dcd52935465805af52f4fc8661c723b6ba36c6822222efb6078e655"
 dependencies = [
- "compact_str",
+ "compact_str 0.10.0",
  "hashbrown 0.17.1",
  "oxc_allocator",
  "oxc_estree",
@@ -2452,7 +2489,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1fbbb040e74db7b98e74cd2e2098fc6bdcb47c10d9b55428f5194926a62ce14"
 dependencies = [
  "base64 0.23.1",
- "compact_str",
+ "compact_str 0.10.0",
  "hmac-sha1-compact",
  "indexmap",
  "itoa",
@@ -3334,6 +3371,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4077,6 +4127,12 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

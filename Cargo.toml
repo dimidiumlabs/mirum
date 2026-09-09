@@ -23,9 +23,7 @@ mirum-vm-vmm = { path = "crates/mirum-vm-vmm" }
 
 # external dependencies
 axum = "0.8.4"
-bytesize = { version = "2.3", features = ["serde"] }
 hex = "0.4.3"
-humantime-serde = "1.1.1"
 hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
 ipnet = { version = "2", features = ["serde"] }
 maud = "0.27.0"
@@ -36,7 +34,6 @@ sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio
 tempfile = "3.23.0"
 tokio = { version = "1.44.2", features = ["macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = "0.7"
-toml = "1.1.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

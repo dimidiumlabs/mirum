@@ -39,7 +39,7 @@ external builders  →  machine directory  →  mirum-vm-vmm
   manual install,          *.hmi files     QEMU / native VMM
   existing VM
                               ↓
-                       Mirumfile runner
+                       Imagefile runner
                      (commands via exec)
                               ↓
                     derived machine directory
@@ -137,36 +137,36 @@ does not change the distributed Mirum VM image.
 `mirum-vm-vmm` does not know whether its input came from an OCI registry, a local
 builder, an exported VM, or a directory copied by the user.
 
-## Derivation with Mirumfile
+## Derivation with Imagefile
 
-A Mirumfile is a recipe for deriving one Mirum VM image from another. Unlike an
+A Imagefile is a recipe for deriving one Mirum VM image from another. Unlike an
 external image builder, it does not install an operating system from scratch.
 Its input is an already loaded machine that can be started and controlled
 through an `exec`-capable access method.
 
-Every Mirumfile has exactly one parent image. There is no empty base and no
+Every Imagefile has exactly one parent image. There is no empty base and no
 equivalent of `FROM scratch`: creating the first bootable machine always happens
-outside the Mirumfile workflow and enters Mirum VM through load or import.
+outside the Imagefile workflow and enters Mirum VM through load or import.
 
 The intended execution model is deliberately simple:
 
 1. Resolve and pin the immutable parent image.
 2. Start it with a persistent writable instance overlay.
-3. Execute the Mirumfile commands sequentially inside the guest through `exec`.
+3. Execute the Imagefile commands sequentially inside the guest through `exec`.
 4. If every command succeeds, shut the guest down and flush its disk state.
 5. Rebase the resulting disk onto the parent and produce a new HMI and
    `config.json`.
 6. If any command fails, discard the temporary instance and produce no image.
 
-One Mirumfile produces one image boundary. Individual commands do not create
+One Imagefile produces one image boundary. Individual commands do not create
 published layers or snapshots, and intermediate states are not part of the
 format. This keeps the backing chain tied to meaningful image derivations rather
 than to the number of provisioning commands.
 
-The exact Mirumfile syntax is not defined yet. It is expected to be a small shell
+The exact Imagefile syntax is not defined yet. It is expected to be a small shell
 dialect for running arbitrary commands, with only the additional structure
 needed to identify the parent and describe changes to the resulting machine
-configuration. A Mirumfile runs in the context of its parent guest and is not
+configuration. A Imagefile runs in the context of its parent guest and is not
 implicitly portable across operating systems.
 
 ## Image Lifecycle
@@ -179,7 +179,7 @@ A finished machine with HMI disks and a `config.json` enters the local store
 through load and can be exported again through save. A qcow2 or raw disk image
 instead enters through import, which converts it to HMI and constructs the
 machine configuration where possible. The resulting Mirum VM image can then be
-distributed or used as the parent of a Mirumfile.
+distributed or used as the parent of a Imagefile.
 
 This boundary is important for systems whose prebuilt images cannot be freely
 redistributed. A project can publish a recipe that downloads official
@@ -199,7 +199,7 @@ backend and boot protocol, creates writable instance state, and starts the VM.
 
 ### Derive
 
-A Mirumfile is the standard path for reproducibly deriving an image. A modified
+A Imagefile is the standard path for reproducibly deriving an image. A modified
 instance disk may also be converted back to HMI and rebased onto the immutable
 image from which it originated. Only the resulting difference needs to be
 published; unchanged parent data is reused through the backing chain and OCI
@@ -212,7 +212,7 @@ materialized, run, and derived. It does not:
 
 - install a base guest operating system from installation media;
 - replace Packer, unattended installers, or other from-scratch image builders;
-- create a machine from an empty Mirumfile parent;
+- create a machine from an empty Imagefile parent;
 - serve as a general-purpose workload orchestrator inside the guest;
 - require a particular OCI registry;
 - promise native acceleration for every host and guest combination;

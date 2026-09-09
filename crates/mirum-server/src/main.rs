@@ -20,13 +20,16 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let config = match config::Config::load(&config_path) {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("mirum-server: {error}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
+    let (config, _metadata) =
+        match dimidiumlabs_config::load::<config::Config>(env!("CARGO_PKG_NAME"), &config_path)
+            .await
+        {
+            Ok(loaded) => loaded.into_parts(),
+            Err(error) => {
+                eprintln!("mirum-server: {error}");
+                return std::process::ExitCode::FAILURE;
+            }
+        };
 
     match daemon::run(config).await {
         Ok(()) => std::process::ExitCode::SUCCESS,
